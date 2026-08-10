@@ -5,7 +5,18 @@ Run this script once to set up the required database tables for the POS system.
 This will create the users, sales, and sale_items tables.
 """
 
+import os
+import secrets
+
 from db import get_conn, create_user
+
+
+def _env_or_default(key: str, default: str) -> str:
+    return os.getenv(key) or default
+
+
+def _env_or_random_password(key: str) -> str:
+    return os.getenv(key) or secrets.token_urlsafe()
 
 def setup_database():
     conn = get_conn()
@@ -71,15 +82,20 @@ def setup_database():
             
         # Create default admin user if not exists
         print("\nSetting up default users...")
+        admin_user = _env_or_default("DEFAULT_ADMIN_USER", "admin")
+        admin_pass = _env_or_random_password("DEFAULT_ADMIN_PASSWORD")
+        cashier_user = _env_or_default("DEFAULT_CASHIER_USER", "cashier")
+        cashier_pass = _env_or_random_password("DEFAULT_CASHIER_PASSWORD")
+
         try:
-            create_user("admin", "admin123", "admin")
-            print("✓ Admin user created (username: admin, password: admin123)")
+            create_user(admin_user, admin_pass, "admin")
+            print(f"✓ Admin user created (username: {admin_user}, password: {admin_pass})")
         except Exception as e:
             print(f"Admin user may already exist: {e}")
             
         try:
-            create_user("cashier", "cashier123", "cashier")
-            print("✓ Cashier user created (username: cashier, password: cashier123)")
+            create_user(cashier_user, cashier_pass, "cashier")
+            print(f"✓ Cashier user created (username: {cashier_user}, password: {cashier_pass})")
         except Exception as e:
             print(f"Cashier user may already exist: {e}")
             
@@ -88,8 +104,8 @@ def setup_database():
         print("="*50)
         print("\nYou can now run login_gui.py to start the application.")
         print("\nDefault login credentials:")
-        print("  Admin: username='Juli', password='8100'")
-        print("  Cashier: username='cashier', password='cashier123'")
+        print(f"  Admin: username='{admin_user}', password='{admin_pass}'")
+        print(f"  Cashier: username='{cashier_user}', password='{cashier_pass}'")
         print("\nIMPORTANT: Change these passwords after first login!")
         
     except Exception as e:
