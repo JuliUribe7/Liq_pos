@@ -1,4 +1,5 @@
 # login_gui.py
+import time
 import tkinter as tk
 from tkinter import messagebox
 from utils import verify_password
@@ -6,16 +7,56 @@ from db import get_user_by_username, create_user
 from dashboard import open_dashboard
 from theme import Theme, bind_hover_effect
 
+_MAX_FAILED_ATTEMPTS = 5
+_LOCKOUT_SECONDS = 60
+_failed_attempts: dict[str, int] = {}
+_lockout_until: dict[str, float] = {}
+
+
+def _is_locked_out(username: str) -> bool:
+    until = _lockout_until.get(username)
+    if until is None:
+        return False
+    if time.time() >= until:
+        _failed_attempts.pop(username, None)
+        _lockout_until.pop(username, None)
+        return False
+    return True
+
+
+def _record_failed_attempt(username: str) -> None:
+    attempts = _failed_attempts.get(username, 0) + 1
+    _failed_attempts[username] = attempts
+    if attempts >= _MAX_FAILED_ATTEMPTS:
+        _lockout_until[username] = time.time() + _LOCKOUT_SECONDS
+
+
+def _clear_login_attempts(username: str) -> None:
+    _failed_attempts.pop(username, None)
+    _lockout_until.pop(username, None)
+
 
 def try_login(username: str, password: str):
-    row = get_user_by_username(username.strip())
+    username = username.strip()
+    password = password.strip()
+    if not username or not password:
+        return False, "Invalid username or password."
+
+    if _is_locked_out(username):
+        return False, "Too many failed attempts. Try again in a moment."
+
+    row = get_user_by_username(username)
     if not row:
-        return False, "User not found."
+        _record_failed_attempt(username)
+        return False, "Invalid username or password."
     _uname, stored_hash, role, active = row
     if not active:
         return False, "Account is inactive."
     if not verify_password(password, stored_hash):
-        return False, "Incorrect password."
+        _record_failed_attempt(username)
+        return False, "Invalid username or password."
+
+    _clear_login_attempts(username)
     return True, role
 
 
