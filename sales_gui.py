@@ -58,6 +58,17 @@ def open_sales_window(current_user: str):
 
     tk.Label(
         search_frame,
+        text="Scan Barcode:",
+        bg=Theme.BG_FRAME,
+        fg=Theme.TEXT_PRIMARY,
+        font=(Theme.FONT_FAMILY, 11, 'bold')
+    ).pack(anchor="w", pady=(0, 5))
+
+    barcode_entry = tk.Entry(search_frame, **Theme.entry_style())
+    barcode_entry.pack(fill="x", pady=5, ipady=6)
+
+    tk.Label(
+        search_frame,
         text="Search Product:",
         bg=Theme.BG_FRAME,
         fg=Theme.TEXT_PRIMARY,
@@ -150,6 +161,17 @@ def open_sales_window(current_user: str):
 
     # Cart data storage
     cart_items = []
+    status_clear_id = None
+
+    status_label = tk.Label(
+        right_frame,
+        text="",
+        bg=Theme.BG_FRAME,
+        fg=Theme.TEXT_WARNING,
+        font=(Theme.FONT_FAMILY, Theme.FONT_SIZE_SMALL),
+        anchor="w",
+    )
+    status_label.pack(fill="x", padx=15, pady=(0, 5))
 
     # Total section
     total_frame = tk.Frame(right_frame, bg=Theme.BG_FRAME)
@@ -168,45 +190,36 @@ def open_sales_window(current_user: str):
         total = sum(item['quantity'] * item['price'] for item in cart_items)
         total_label.config(text=f"Total: ${total:.2f}")
 
+    def show_low_stock_warning(brand):
+        nonlocal status_clear_id
+        if status_clear_id is not None:
+            win.after_cancel(status_clear_id)
+        status_label.config(text=f"Low stock: {brand}", fg=Theme.TEXT_WARNING)
+        status_clear_id = win.after(3000, lambda: status_label.config(text=""))
+
     # Action buttons
     button_frame = tk.Frame(right_frame, bg=Theme.BG_FRAME)
     button_frame.pack(fill="x", padx=15, pady=(0, 10))
 
-    def add_to_cart():
-        selected = product_tree.selection()
-        if not selected:
-            messagebox.showwarning("No Selection", "Please select a product to add.")
-            return
-
-        item = product_tree.item(selected[0])
-        item_id = item['values'][0]
-        brand = item['values'][1]
-        size = item['values'][2]
-        price = float(item['values'][3])
-        stock = int(item['values'][4])
-
-        if stock <= 0:
-            messagebox.showerror("Out of Stock", "This item is out of stock.")
-            return
-
+    def add_to_cart(item_id, brand, size, price, stock):
         # Check if item already in cart
         for cart_item in cart_items:
             if cart_item['item_id'] == item_id:
-                if cart_item['quantity'] < stock:
-                    cart_item['quantity'] += 1
-                    for tree_item in cart_tree.get_children():
-                        if cart_tree.item(tree_item)['values'][0] == f"{brand} - {size}":
-                            cart_tree.item(tree_item, values=(
-                                f"{brand} - {size}",
-                                cart_item['quantity'],
-                                f"${price:.2f}",
-                                f"${cart_item['quantity'] * price:.2f}"
-                            ))
-                            break
-                    update_total()
-                else:
-                    messagebox.showwarning("Stock Limit", "Cannot add more than available stock.")
-                return
+                cart_item['quantity'] += 1
+                new_quantity = cart_item['quantity']
+                for tree_item in cart_tree.get_children():
+                    if cart_tree.item(tree_item)['values'][0] == f"{brand} - {size}":
+                        cart_tree.item(tree_item, values=(
+                            f"{brand} - {size}",
+                            cart_item['quantity'],
+                            f"${price:.2f}",
+                            f"${cart_item['quantity'] * price:.2f}"
+                        ))
+                        break
+                update_total()
+                if stock - new_quantity <= 0:
+                    show_low_stock_warning(brand)
+                return True
 
         # Add new item to cart
         cart_items.append({
@@ -225,6 +238,24 @@ def open_sales_window(current_user: str):
             f"${price:.2f}"
         ))
         update_total()
+        if stock - 1 <= 0:
+            show_low_stock_warning(brand)
+        return True
+
+    def add_selected_to_cart():
+        selected = product_tree.selection()
+        if not selected:
+            messagebox.showwarning("No Selection", "Please select a product to add.")
+            return
+
+        item = product_tree.item(selected[0])
+        add_to_cart(
+            item['values'][0],
+            item['values'][1],
+            item['values'][2],
+            float(item['values'][3]),
+            int(item['values'][4]),
+        )
 
     def remove_from_cart():
         selected = cart_tree.selection()
@@ -307,7 +338,7 @@ def open_sales_window(current_user: str):
     btn_add = tk.Button(
         button_frame,
         text="Add to Cart",
-        command=add_to_cart,
+        command=add_selected_to_cart,
         **Theme.button_style(),
         width=12
     )
@@ -397,14 +428,54 @@ def open_sales_window(current_user: str):
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load products: {str(e)}")
 
+    def on_barcode_scan(event=None):
+        barcode = barcode_entry.get().strip()
+        if not barcode:
+            return
+
+        try:
+            conn = get_conn()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT i.item_id, i.brand, i.size, i.price, inv.quantity
+                    FROM items i
+                    LEFT JOIN inventory inv ON i.item_id = inv.item_id
+                    WHERE i.barcode = %s
+                """, (barcode,))
+                row = cur.fetchone()
+            conn.close()
+        except Exception as e:
+            messagebox.showerror("Error", f"Barcode lookup failed: {str(e)}")
+            barcode_entry.focus_set()
+            return
+
+        if not row:
+            messagebox.showwarning("Barcode Not Found", f"No item found for barcode: {barcode}")
+            barcode_entry.focus_set()
+            return
+
+        item_id, brand, size, price, quantity = row
+        added = add_to_cart(
+            item_id,
+            brand or "",
+            size or "",
+            float(price) if price else 0.0,
+            quantity if quantity is not None else 0,
+        )
+        if added:
+            barcode_entry.delete(0, tk.END)
+        barcode_entry.focus_set()
+
     # Search functionality
     def on_search(*args):
         load_products(search_entry.get().strip())
 
     search_entry.bind('<KeyRelease>', on_search)
+    barcode_entry.bind('<Return>', on_barcode_scan)
 
     # Double-click to add to cart
-    product_tree.bind('<Double-1>', lambda e: add_to_cart())
+    product_tree.bind('<Double-1>', lambda e: add_selected_to_cart())
 
     # Load initial products
     load_products()
+    barcode_entry.focus_set()
