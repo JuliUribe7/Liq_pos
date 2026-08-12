@@ -1,4 +1,5 @@
 # sales_gui.py
+import os
 import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import datetime
@@ -161,6 +162,8 @@ def open_sales_window(current_user: str):
 
     # Cart data storage
     cart_items = []
+    discount_type = None
+    discount_value = 0.0
     status_clear_id = None
 
     status_label = tk.Label(
@@ -186,16 +189,34 @@ def open_sales_window(current_user: str):
     )
     total_label.pack(pady=10)
 
+    def calculate_totals():
+        subtotal = sum(item['quantity'] * item['price'] for item in cart_items)
+        if discount_type == 'percent':
+            discount_amount = subtotal * (discount_value / 100)
+        elif discount_type == 'flat':
+            discount_amount = min(discount_value, subtotal)
+        else:
+            discount_amount = 0
+        taxable = subtotal - discount_amount
+        tax_amount = taxable * float(os.getenv('TAX_RATE', 0))
+        total = taxable + tax_amount
+        return {
+            'subtotal': subtotal,
+            'discount_amount': discount_amount,
+            'tax_amount': tax_amount,
+            'total': total,
+        }
+
     def update_total():
-        total = sum(item['quantity'] * item['price'] for item in cart_items)
-        total_label.config(text=f"Total: ${total:.2f}")
+        totals = calculate_totals()
+        total_label.config(text=f"Total: ${totals['total']:.2f}")
 
     def show_low_stock_warning(brand):
         nonlocal status_clear_id
         if status_clear_id is not None:
             win.after_cancel(status_clear_id)
         status_label.config(text=f"Low stock: {brand}", fg=Theme.TEXT_WARNING)
-        status_clear_id = win.after(3000, lambda: status_label.config(text=""))
+        status_clear_id = win.after(3000, lambda: status_label.config(text="") if win.winfo_exists() else None)
 
     # Action buttons
     button_frame = tk.Frame(right_frame, bg=Theme.BG_FRAME)
@@ -283,33 +304,21 @@ def open_sales_window(current_user: str):
         try:
             conn = get_conn()
             with conn.cursor() as cur:
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS sales (
-                        sale_id SERIAL PRIMARY KEY,
-                        sale_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        total_amount DECIMAL(10,2),
-                        cashier VARCHAR(100)
-                    )
-                """)
-                
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS sale_items (
-                        sale_item_id SERIAL PRIMARY KEY,
-                        sale_id INTEGER REFERENCES sales(sale_id),
-                        item_id INTEGER,
-                        quantity INTEGER,
-                        price DECIMAL(10,2),
-                        subtotal DECIMAL(10,2)
-                    )
-                """)
-
-                total = sum(item['quantity'] * item['price'] for item in cart_items)
+                # sales and sale_items are created/migrated by setup_database.py —
+                # checkout() should not redefine their schema here.
+                totals = calculate_totals()
 
                 cur.execute("""
-                    INSERT INTO sales (total_amount, cashier)
-                    VALUES (%s, %s)
+                    INSERT INTO sales (subtotal, discount_amount, tax_amount, total_amount, cashier)
+                    VALUES (%s, %s, %s, %s, %s)
                     RETURNING sale_id
-                """, (total, current_user))
+                """, (
+                    totals['subtotal'],
+                    totals['discount_amount'],
+                    totals['tax_amount'],
+                    totals['total'],
+                    current_user,
+                ))
                 sale_id = cur.fetchone()[0]
 
                 for item in cart_items:
@@ -328,9 +337,10 @@ def open_sales_window(current_user: str):
                 conn.commit()
             conn.close()
 
-            messagebox.showinfo("Success", f"Sale completed! Total: ${total:.2f}\nSale ID: {sale_id}")
-            clear_cart()
-            load_products()
+            messagebox.showinfo("Success", f"Sale completed! Total: ${totals['total']:.2f}\nSale ID: {sale_id}")
+            if win.winfo_exists():
+                clear_cart()
+                load_products()
 
         except Exception as e:
             messagebox.showerror("Error", f"Checkout failed: {str(e)}")
