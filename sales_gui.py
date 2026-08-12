@@ -9,7 +9,7 @@ from theme import Theme, bind_hover_effect
 def open_sales_window(current_user: str):
     win = tk.Toplevel()
     win.title("Sales/POS")
-    win.geometry("1400x750")
+    win.geometry("1400x850")
     win.config(**Theme.window_style())
 
     # Configure ttk style
@@ -144,7 +144,7 @@ def open_sales_window(current_user: str):
         columns=cart_columns,
         show="headings",
         yscrollcommand=cart_scroll.set,
-        height=14
+        height=10
     )
     cart_scroll.config(command=cart_tree.yview)
 
@@ -209,7 +209,77 @@ def open_sales_window(current_user: str):
 
     def update_total():
         totals = calculate_totals()
-        total_label.config(text=f"Total: ${totals['total']:.2f}")
+        if totals['discount_amount'] > 0:
+            total_label.config(
+                text=f"Total: ${totals['total']:.2f}  (-${totals['discount_amount']:.2f} discount)"
+            )
+        else:
+            total_label.config(text=f"Total: ${totals['total']:.2f}")
+
+    def open_discount_dialog():
+        nonlocal discount_type, discount_value
+
+        dialog = tk.Toplevel(win)
+        dialog.title("Apply Discount")
+        dialog.geometry("320x260")
+        dialog.config(bg=Theme.BG_FRAME)
+        dialog.transient(win)
+        dialog.grab_set()
+
+        tk.Label(
+            dialog, text="Discount Type", bg=Theme.BG_FRAME,
+            fg=Theme.TEXT_PRIMARY, font=(Theme.FONT_FAMILY, 11, "bold")
+        ).pack(pady=(15, 5))
+
+        mode_var = tk.StringVar(value=discount_type or "none")
+        for label, value in [("No Discount", "none"), ("Percent Off (%)", "percent"), ("Flat Amount ($)", "flat")]:
+            tk.Radiobutton(
+                dialog, text=label, variable=mode_var, value=value,
+                bg=Theme.BG_FRAME, fg=Theme.TEXT_PRIMARY,
+                selectcolor=Theme.BG_BUTTON, activebackground=Theme.BG_FRAME,
+                font=(Theme.FONT_FAMILY, 10)
+            ).pack(anchor="w", padx=30)
+
+        tk.Label(
+            dialog, text="Value:", bg=Theme.BG_FRAME,
+            fg=Theme.TEXT_PRIMARY, font=(Theme.FONT_FAMILY, 10)
+        ).pack(pady=(15, 5))
+
+        value_entry = tk.Entry(dialog, **Theme.entry_style())
+        value_entry.pack(padx=30, fill="x", ipady=4)
+        if discount_value:
+            value_entry.insert(0, str(discount_value))
+
+        def apply_discount():
+            nonlocal discount_type, discount_value
+            mode = mode_var.get()
+            if mode == "none":
+                discount_type = None
+                discount_value = 0.0
+            else:
+                raw = value_entry.get().strip()
+                try:
+                    parsed = float(raw)
+                    if parsed < 0:
+                        raise ValueError
+                except ValueError:
+                    messagebox.showerror("Invalid Value", "Enter a non-negative number.", parent=dialog)
+                    return
+                discount_type = mode
+                discount_value = parsed
+            update_total()
+            dialog.destroy()
+
+        btn_frame = tk.Frame(dialog, bg=Theme.BG_FRAME)
+        btn_frame.pack(pady=20)
+        tk.Button(
+            btn_frame, text="Apply", command=apply_discount,
+            **Theme.button_style(), width=10
+        ).pack(side="left", padx=5)
+        tk.Button(
+            btn_frame, text="Cancel", command=dialog.destroy,
+            **Theme.button_style(), width=10
+        ).pack(side="left", padx=5)
 
     def show_low_stock_warning(brand):
         nonlocal status_clear_id
@@ -262,6 +332,70 @@ def open_sales_window(current_user: str):
         if stock - 1 <= 0:
             show_low_stock_warning(brand)
         return True
+
+    def add_custom_item():
+        dialog = tk.Toplevel(win)
+        dialog.title("Add Custom Item")
+        dialog.geometry("320x220")
+        dialog.config(bg=Theme.BG_FRAME)
+        dialog.transient(win)
+        dialog.grab_set()
+
+        tk.Label(
+            dialog, text="Item Name (e.g. Bag)", bg=Theme.BG_FRAME,
+            fg=Theme.TEXT_PRIMARY, font=(Theme.FONT_FAMILY, 10, "bold")
+        ).pack(pady=(15, 5))
+        name_entry = tk.Entry(dialog, **Theme.entry_style())
+        name_entry.pack(padx=30, fill="x", ipady=4)
+
+        tk.Label(
+            dialog, text="Price ($)", bg=Theme.BG_FRAME,
+            fg=Theme.TEXT_PRIMARY, font=(Theme.FONT_FAMILY, 10, "bold")
+        ).pack(pady=(15, 5))
+        price_entry = tk.Entry(dialog, **Theme.entry_style())
+        price_entry.pack(padx=30, fill="x", ipady=4)
+
+        def confirm_add():
+            name = name_entry.get().strip()
+            if not name:
+                messagebox.showerror("Missing Name", "Enter a name for the item.", parent=dialog)
+                return
+            try:
+                price = float(price_entry.get().strip())
+                if price < 0:
+                    raise ValueError
+            except ValueError:
+                messagebox.showerror("Invalid Price", "Enter a non-negative number.", parent=dialog)
+                return
+
+            cart_items.append({
+                'item_id': None,
+                'brand': name,
+                'size': "",
+                'price': price,
+                'quantity': 1,
+                'stock': None,
+                'is_custom': True,
+            })
+            cart_tree.insert("", "end", values=(
+                f"{name} (Custom)",
+                1,
+                f"${price:.2f}",
+                f"${price:.2f}"
+            ))
+            update_total()
+            dialog.destroy()
+
+        btn_frame = tk.Frame(dialog, bg=Theme.BG_FRAME)
+        btn_frame.pack(pady=15)
+        tk.Button(
+            btn_frame, text="Add", command=confirm_add,
+            **Theme.button_style(), width=10
+        ).pack(side="left", padx=5)
+        tk.Button(
+            btn_frame, text="Cancel", command=dialog.destroy,
+            **Theme.button_style(), width=10
+        ).pack(side="left", padx=5)
 
     def add_selected_to_cart():
         selected = product_tree.selection()
@@ -323,16 +457,20 @@ def open_sales_window(current_user: str):
 
                 for item in cart_items:
                     subtotal = item['quantity'] * item['price']
-                    cur.execute("""
-                        INSERT INTO sale_items (sale_id, item_id, quantity, price, subtotal)
-                        VALUES (%s, %s, %s, %s, %s)
-                    """, (sale_id, item['item_id'], item['quantity'], item['price'], subtotal))
+                    is_custom = item.get('is_custom', False)
+                    item_name = item['brand'] if is_custom else None
 
                     cur.execute("""
-                        UPDATE inventory
-                        SET quantity = quantity - %s
-                        WHERE item_id = %s
-                    """, (item['quantity'], item['item_id']))
+                        INSERT INTO sale_items (sale_id, item_id, quantity, price, subtotal, item_name, is_custom)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """, (sale_id, item['item_id'], item['quantity'], item['price'], subtotal, item_name, is_custom))
+
+                    if not is_custom and item['item_id'] is not None:
+                        cur.execute("""
+                            UPDATE inventory
+                            SET quantity = quantity - %s
+                            WHERE item_id = %s
+                        """, (item['quantity'], item['item_id']))
 
                 conn.commit()
             conn.close()
@@ -352,7 +490,7 @@ def open_sales_window(current_user: str):
         **Theme.button_style(),
         width=12
     )
-    btn_add.grid(row=0, column=0, padx=5, pady=5)
+    btn_add.grid(row=0, column=0, padx=5, pady=3)
     bind_hover_effect(btn_add)
 
     btn_remove = tk.Button(
@@ -362,7 +500,7 @@ def open_sales_window(current_user: str):
         **Theme.button_style(),
         width=12
     )
-    btn_remove.grid(row=0, column=1, padx=5, pady=5)
+    btn_remove.grid(row=0, column=1, padx=5, pady=3)
     bind_hover_effect(btn_remove)
 
     btn_clear = tk.Button(
@@ -372,7 +510,7 @@ def open_sales_window(current_user: str):
         **Theme.button_style(),
         width=12
     )
-    btn_clear.grid(row=1, column=0, padx=5, pady=5)
+    btn_clear.grid(row=1, column=0, padx=5, pady=3)
     bind_hover_effect(btn_clear)
 
     # Back button
@@ -388,8 +526,28 @@ def open_sales_window(current_user: str):
         activebackground="#C82333",
         cursor='hand2'
     )
-    btn_back.grid(row=1, column=1, padx=5, pady=5)
-    
+    btn_back.grid(row=1, column=1, padx=5, pady=3)
+
+    btn_discount = tk.Button(
+        button_frame,
+        text="Discount",
+        command=open_discount_dialog,
+        **Theme.button_style(),
+        width=12
+    )
+    btn_discount.grid(row=2, column=0, padx=5, pady=3)
+    bind_hover_effect(btn_discount)
+
+    btn_custom_item = tk.Button(
+        button_frame,
+        text="Custom Item",
+        command=add_custom_item,
+        **Theme.button_style(),
+        width=12
+    )
+    btn_custom_item.grid(row=2, column=1, padx=5, pady=3)
+    bind_hover_effect(btn_custom_item)
+
     # Checkout button
     checkout_btn = tk.Button(
         right_frame,
