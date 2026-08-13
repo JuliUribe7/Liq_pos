@@ -41,25 +41,45 @@ def setup_database():
                 CREATE TABLE IF NOT EXISTS sales (
                     sale_id SERIAL PRIMARY KEY,
                     sale_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    subtotal DECIMAL(10,2) NOT NULL DEFAULT 0,
+                    discount_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+                    tax_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
                     total_amount DECIMAL(10,2) NOT NULL,
                     cashier VARCHAR(100) NOT NULL,
-                    payment_method VARCHAR(50) DEFAULT 'cash'
+                    payment_method VARCHAR(50) DEFAULT 'cash',
+                    cash_tendered DECIMAL(10,2),
+                    change_due DECIMAL(10,2)
                 )
             """)
-            
+
             # Create sale_items table
             print("Creating sale_items table...")
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS sale_items (
                     sale_item_id SERIAL PRIMARY KEY,
                     sale_id INTEGER REFERENCES sales(sale_id) ON DELETE CASCADE,
-                    item_id INTEGER NOT NULL,
+                    item_id INTEGER,
                     quantity INTEGER NOT NULL,
                     price DECIMAL(10,2) NOT NULL,
-                    subtotal DECIMAL(10,2) NOT NULL
+                    subtotal DECIMAL(10,2) NOT NULL,
+                    item_name VARCHAR(255),
+                    is_custom BOOLEAN NOT NULL DEFAULT FALSE
                 )
             """)
-            
+
+            # Reconcile columns/constraints on tables that already existed
+            # before this schema was updated (safe to re-run any number of times).
+            print("Reconciling existing table columns...")
+            cur.execute("ALTER TABLE sales ADD COLUMN IF NOT EXISTS subtotal DECIMAL(10,2) NOT NULL DEFAULT 0")
+            cur.execute("ALTER TABLE sales ADD COLUMN IF NOT EXISTS discount_amount DECIMAL(10,2) NOT NULL DEFAULT 0")
+            cur.execute("ALTER TABLE sales ADD COLUMN IF NOT EXISTS tax_amount DECIMAL(10,2) NOT NULL DEFAULT 0")
+            cur.execute("ALTER TABLE sales ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50) DEFAULT 'cash'")
+            cur.execute("ALTER TABLE sales ADD COLUMN IF NOT EXISTS cash_tendered DECIMAL(10,2)")
+            cur.execute("ALTER TABLE sales ADD COLUMN IF NOT EXISTS change_due DECIMAL(10,2)")
+            cur.execute("ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS item_name VARCHAR(255)")
+            cur.execute("ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS is_custom BOOLEAN NOT NULL DEFAULT FALSE")
+            cur.execute("ALTER TABLE sale_items ALTER COLUMN item_id DROP NOT NULL")
+
             # Create indexes for better performance
             print("Creating indexes...")
             cur.execute("""

@@ -160,6 +160,35 @@ def open_sales_window(current_user: str):
 
     cart_tree.pack(side="left", fill="both", expand=True)
 
+    # Scrollable controls area (status/breakdown/buttons/checkout) — fixed-height
+    # region with its own scrollbar so future buttons never get clipped off the
+    # bottom of the window and never require manually resizing it.
+    controls_outer = tk.Frame(right_frame, bg=Theme.BG_FRAME)
+    controls_outer.pack(side="bottom", fill="x")
+
+    controls_canvas = tk.Canvas(controls_outer, bg=Theme.BG_FRAME, highlightthickness=0, height=460)
+    controls_canvas.pack(side="left", fill="both", expand=True)
+
+    controls_scroll = ttk.Scrollbar(controls_outer, orient="vertical", command=controls_canvas.yview)
+    controls_scroll.pack(side="right", fill="y")
+    controls_canvas.configure(yscrollcommand=controls_scroll.set)
+
+    controls_frame = tk.Frame(controls_canvas, bg=Theme.BG_FRAME)
+    controls_window = controls_canvas.create_window((0, 0), window=controls_frame, anchor="nw")
+
+    def _controls_configure(event=None):
+        controls_canvas.configure(scrollregion=controls_canvas.bbox("all"))
+    controls_frame.bind("<Configure>", _controls_configure)
+
+    def _controls_canvas_resize(event):
+        controls_canvas.itemconfig(controls_window, width=event.width)
+    controls_canvas.bind("<Configure>", _controls_canvas_resize)
+
+    def _controls_mousewheel(event):
+        controls_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+    controls_canvas.bind("<Enter>", lambda e: controls_canvas.bind_all("<MouseWheel>", _controls_mousewheel))
+    controls_canvas.bind("<Leave>", lambda e: controls_canvas.unbind_all("<MouseWheel>"))
+
     # Cart data storage
     cart_items = []
     discount_type = None
@@ -167,7 +196,7 @@ def open_sales_window(current_user: str):
     status_clear_id = None
 
     status_label = tk.Label(
-        right_frame,
+        controls_frame,
         text="",
         bg=Theme.BG_FRAME,
         fg=Theme.TEXT_WARNING,
@@ -176,9 +205,33 @@ def open_sales_window(current_user: str):
     )
     status_label.pack(fill="x", padx=15, pady=(0, 5))
 
-    # Total section
-    total_frame = tk.Frame(right_frame, bg=Theme.BG_FRAME)
+    # Order breakdown section
+    total_frame = tk.Frame(controls_frame, bg=Theme.BG_FRAME)
     total_frame.pack(fill="x", padx=15, pady=15)
+
+    breakdown_frame = tk.Frame(total_frame, bg=Theme.BG_FRAME)
+    breakdown_frame.pack(fill="x")
+    breakdown_frame.columnconfigure(0, weight=1)
+    breakdown_frame.columnconfigure(1, weight=0)
+
+    def _breakdown_row(row, label_text):
+        tk.Label(
+            breakdown_frame, text=label_text, bg=Theme.BG_FRAME,
+            fg=Theme.TEXT_SECONDARY, font=(Theme.FONT_FAMILY, Theme.FONT_SIZE_SMALL)
+        ).grid(row=row, column=0, sticky="w", pady=2)
+        value_label = tk.Label(
+            breakdown_frame, text="$0.00", bg=Theme.BG_FRAME,
+            fg=Theme.TEXT_PRIMARY, font=(Theme.FONT_FAMILY, Theme.FONT_SIZE_SMALL, "bold")
+        )
+        value_label.grid(row=row, column=1, sticky="e", pady=2)
+        return value_label
+
+    items_value_label = _breakdown_row(0, "Items")
+    subtotal_value_label = _breakdown_row(1, "Subtotal")
+    discount_value_label = _breakdown_row(2, "Discount")
+    tax_value_label = _breakdown_row(3, "Tax")
+
+    tk.Frame(total_frame, bg=Theme.BORDER_DEFAULT, height=1).pack(fill="x", pady=8)
 
     total_label = tk.Label(
         total_frame,
@@ -187,10 +240,11 @@ def open_sales_window(current_user: str):
         fg=Theme.ACCENT_GOLD,
         font=(Theme.FONT_FAMILY, 18, "bold")
     )
-    total_label.pack(pady=10)
+    total_label.pack(pady=(0, 5))
 
     def calculate_totals():
         subtotal = sum(item['quantity'] * item['price'] for item in cart_items)
+        total_items = sum(item['quantity'] for item in cart_items)
         if discount_type == 'percent':
             discount_amount = subtotal * (discount_value / 100)
         elif discount_type == 'flat':
@@ -201,6 +255,7 @@ def open_sales_window(current_user: str):
         tax_amount = taxable * float(os.getenv('TAX_RATE', 0))
         total = taxable + tax_amount
         return {
+            'total_items': total_items,
             'subtotal': subtotal,
             'discount_amount': discount_amount,
             'tax_amount': tax_amount,
@@ -209,12 +264,13 @@ def open_sales_window(current_user: str):
 
     def update_total():
         totals = calculate_totals()
-        if totals['discount_amount'] > 0:
-            total_label.config(
-                text=f"Total: ${totals['total']:.2f}  (-${totals['discount_amount']:.2f} discount)"
-            )
-        else:
-            total_label.config(text=f"Total: ${totals['total']:.2f}")
+        items_value_label.config(text=str(totals['total_items']))
+        subtotal_value_label.config(text=f"${totals['subtotal']:.2f}")
+        discount_value_label.config(
+            text=f"-${totals['discount_amount']:.2f}" if totals['discount_amount'] > 0 else "$0.00"
+        )
+        tax_value_label.config(text=f"${totals['tax_amount']:.2f}")
+        total_label.config(text=f"Total: ${totals['total']:.2f}")
 
     def open_discount_dialog():
         nonlocal discount_type, discount_value
@@ -289,7 +345,7 @@ def open_sales_window(current_user: str):
         status_clear_id = win.after(3000, lambda: status_label.config(text="") if win.winfo_exists() else None)
 
     # Action buttons
-    button_frame = tk.Frame(right_frame, bg=Theme.BG_FRAME)
+    button_frame = tk.Frame(controls_frame, bg=Theme.BG_FRAME)
     button_frame.pack(fill="x", padx=15, pady=(0, 10))
 
     def add_to_cart(item_id, brand, size, price, stock):
@@ -430,21 +486,17 @@ def open_sales_window(current_user: str):
         cart_items.clear()
         update_total()
 
-    def checkout():
-        if not cart_items:
-            messagebox.showwarning("Empty Cart", "Please add items to cart before checkout.")
-            return
-
+    def perform_checkout(payment_method, cash_tendered, change_due):
         try:
             conn = get_conn()
             with conn.cursor() as cur:
                 # sales and sale_items are created/migrated by setup_database.py —
-                # checkout() should not redefine their schema here.
+                # checkout should not redefine their schema here.
                 totals = calculate_totals()
 
                 cur.execute("""
-                    INSERT INTO sales (subtotal, discount_amount, tax_amount, total_amount, cashier)
-                    VALUES (%s, %s, %s, %s, %s)
+                    INSERT INTO sales (subtotal, discount_amount, tax_amount, total_amount, cashier, payment_method, cash_tendered, change_due)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING sale_id
                 """, (
                     totals['subtotal'],
@@ -452,6 +504,9 @@ def open_sales_window(current_user: str):
                     totals['tax_amount'],
                     totals['total'],
                     current_user,
+                    payment_method,
+                    cash_tendered,
+                    change_due,
                 ))
                 sale_id = cur.fetchone()[0]
 
@@ -475,13 +530,168 @@ def open_sales_window(current_user: str):
                 conn.commit()
             conn.close()
 
-            messagebox.showinfo("Success", f"Sale completed! Total: ${totals['total']:.2f}\nSale ID: {sale_id}")
+            summary = f"Sale completed! Total: ${totals['total']:.2f}\nSale ID: {sale_id}"
+            if payment_method == 'cash' and change_due is not None:
+                summary += f"\nChange Due: ${change_due:.2f}"
+            messagebox.showinfo("Success", summary)
             if win.winfo_exists():
                 clear_cart()
                 load_products()
+            return True
 
         except Exception as e:
             messagebox.showerror("Error", f"Checkout failed: {str(e)}")
+            return False
+
+    def open_payment_dialog():
+        if not cart_items:
+            messagebox.showwarning("Empty Cart", "Please add items to cart before checkout.")
+            return
+
+        totals = calculate_totals()
+
+        dialog = tk.Toplevel(win)
+        dialog.title("Payment")
+        dialog.geometry("380x540")
+        dialog.config(bg=Theme.BG_FRAME)
+        dialog.transient(win)
+        dialog.grab_set()
+
+        tk.Label(
+            dialog, text="Total Due", bg=Theme.BG_FRAME,
+            fg=Theme.TEXT_SECONDARY, font=(Theme.FONT_FAMILY, 11, "bold")
+        ).pack(pady=(15, 0))
+
+        tk.Label(
+            dialog, text=f"${totals['total']:.2f}", bg=Theme.BG_FRAME,
+            fg=Theme.ACCENT_GOLD, font=(Theme.FONT_FAMILY, 26, "bold")
+        ).pack(pady=(0, 15))
+
+        method_frame = tk.Frame(dialog, bg=Theme.BG_FRAME)
+        method_frame.pack(fill="x", padx=20)
+
+        content_frame = tk.Frame(dialog, bg=Theme.BG_FRAME)
+        content_frame.pack(fill="both", expand=True, padx=20, pady=15)
+
+        def clear_content():
+            for w in content_frame.winfo_children():
+                w.destroy()
+
+        def do_confirm(payment_method, cash_tendered, change_due):
+            if perform_checkout(payment_method, cash_tendered, change_due):
+                dialog.destroy()
+
+        def show_cash_panel():
+            btn_cash.config(bg=Theme.ACCENT_GOLD, fg=Theme.TEXT_DARK)
+            btn_card.config(bg=Theme.BG_BUTTON, fg=Theme.TEXT_PRIMARY)
+            clear_content()
+
+            tk.Label(
+                content_frame, text="Amount Tendered", bg=Theme.BG_FRAME,
+                fg=Theme.TEXT_PRIMARY, font=(Theme.FONT_FAMILY, 10, "bold")
+            ).pack(anchor="w")
+
+            tendered_var = tk.StringVar(value="0.00")
+            tendered_entry = tk.Entry(content_frame, textvariable=tendered_var, **Theme.entry_style())
+            tendered_entry.pack(fill="x", pady=(5, 10), ipady=6)
+
+            quick_frame = tk.Frame(content_frame, bg=Theme.BG_FRAME)
+            quick_frame.pack(fill="x", pady=(0, 10))
+
+            balance_label = tk.Label(
+                content_frame, text="", bg=Theme.BG_FRAME,
+                font=(Theme.FONT_FAMILY, 14, "bold")
+            )
+
+            def refresh_balance(*_):
+                try:
+                    tendered = float(tendered_var.get())
+                except ValueError:
+                    tendered = 0.0
+                diff = tendered - totals['total']
+                if diff >= 0:
+                    balance_label.config(text=f"Change Due: ${diff:.2f}", fg=Theme.TEXT_SUCCESS)
+                else:
+                    balance_label.config(text=f"Balance Due: ${-diff:.2f}", fg=Theme.TEXT_WARNING)
+
+            def add_bill(amount):
+                try:
+                    current = float(tendered_var.get())
+                except ValueError:
+                    current = 0.0
+                tendered_var.set(f"{current + amount:.2f}")
+
+            for i, amount in enumerate([1, 5, 10, 20, 50, 100]):
+                b = tk.Button(
+                    quick_frame, text=f"${amount}", command=lambda a=amount: add_bill(a),
+                    **Theme.button_style(), width=6
+                )
+                b.grid(row=i // 3, column=i % 3, padx=3, pady=3)
+                bind_hover_effect(b)
+
+            btn_reset = tk.Button(
+                content_frame, text="Clear Tendered",
+                command=lambda: tendered_var.set("0.00"),
+                **Theme.button_style()
+            )
+            btn_reset.pack(fill="x", pady=(0, 10))
+            bind_hover_effect(btn_reset)
+
+            balance_label.pack(pady=(0, 15))
+            tendered_var.trace_add("write", refresh_balance)
+            refresh_balance()
+
+            def confirm_cash():
+                try:
+                    tendered = float(tendered_var.get())
+                except ValueError:
+                    messagebox.showerror("Invalid Amount", "Enter a valid tendered amount.", parent=dialog)
+                    return
+                if tendered < totals['total']:
+                    messagebox.showerror("Insufficient Amount", "Amount tendered is less than the total due.", parent=dialog)
+                    return
+                do_confirm('cash', tendered, tendered - totals['total'])
+
+            btn_confirm = tk.Button(
+                content_frame, text="Confirm Cash Sale", command=confirm_cash,
+                **Theme.primary_button_style(), height=2
+            )
+            btn_confirm.pack(fill="x")
+
+        def show_card_panel():
+            btn_card.config(bg=Theme.ACCENT_GOLD, fg=Theme.TEXT_DARK)
+            btn_cash.config(bg=Theme.BG_BUTTON, fg=Theme.TEXT_PRIMARY)
+            clear_content()
+
+            tk.Label(
+                content_frame, text="Charge card for the total shown above.",
+                bg=Theme.BG_FRAME, fg=Theme.TEXT_SECONDARY,
+                font=(Theme.FONT_FAMILY, 11), wraplength=300, justify="center"
+            ).pack(pady=(20, 20))
+
+            def confirm_card():
+                do_confirm('card', None, None)
+
+            btn_confirm = tk.Button(
+                content_frame, text="Confirm Card Sale", command=confirm_card,
+                **Theme.primary_button_style(), height=2
+            )
+            btn_confirm.pack(fill="x")
+
+        btn_cash = tk.Button(method_frame, text="Cash", command=lambda: show_cash_panel(), **Theme.button_style())
+        btn_cash.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        btn_card = tk.Button(method_frame, text="Card", command=lambda: show_card_panel(), **Theme.button_style())
+        btn_card.pack(side="left", fill="x", expand=True, padx=(5, 0))
+
+        tk.Button(
+            dialog, text="Cancel", command=dialog.destroy,
+            **Theme.button_style()
+        ).pack(fill="x", padx=20, pady=(0, 15))
+
+        show_cash_panel()
+
+    def no_sale():
+        messagebox.showinfo("No Sale", "Register opened. No sale recorded.")
 
     btn_add = tk.Button(
         button_frame,
@@ -548,11 +758,21 @@ def open_sales_window(current_user: str):
     btn_custom_item.grid(row=2, column=1, padx=5, pady=3)
     bind_hover_effect(btn_custom_item)
 
+    btn_no_sale = tk.Button(
+        button_frame,
+        text="No Sale",
+        command=no_sale,
+        **Theme.button_style(),
+        width=12
+    )
+    btn_no_sale.grid(row=3, column=0, columnspan=2, padx=5, pady=3, sticky="ew")
+    bind_hover_effect(btn_no_sale)
+
     # Checkout button
     checkout_btn = tk.Button(
-        right_frame,
+        controls_frame,
         text="CHECKOUT",
-        command=checkout,
+        command=open_payment_dialog,
         **Theme.primary_button_style(),
         height=2
     )
