@@ -245,15 +245,35 @@ def open_sales_window(current_user: str):
     def calculate_totals():
         subtotal = sum(item['quantity'] * item['price'] for item in cart_items)
         total_items = sum(item['quantity'] for item in cart_items)
+
+        # Discount only applies against items flagged discount_ok (e.g. alcohol
+        # may be legally excluded). Tax only applies against items flagged
+        # sales_tax, computed on each item's post-discount amount.
+        discount_pool = sum(
+            item['quantity'] * item['price'] for item in cart_items
+            if item.get('discount_ok', True)
+        )
         if discount_type == 'percent':
-            discount_amount = subtotal * (discount_value / 100)
+            discount_amount = discount_pool * (discount_value / 100)
         elif discount_type == 'flat':
-            discount_amount = min(discount_value, subtotal)
+            discount_amount = min(discount_value, discount_pool)
         else:
             discount_amount = 0
-        taxable = subtotal - discount_amount
-        tax_amount = taxable * float(os.getenv('TAX_RATE', 0))
-        total = taxable + tax_amount
+        discount_ratio = (discount_amount / discount_pool) if discount_pool > 0 else 0
+
+        taxable_base = 0.0
+        for item in cart_items:
+            item_subtotal = item['quantity'] * item['price']
+            if item.get('discount_ok', True):
+                post_discount = item_subtotal * (1 - discount_ratio)
+            else:
+                post_discount = item_subtotal
+            if item.get('sales_tax', True):
+                taxable_base += post_discount
+
+        tax_amount = taxable_base * float(os.getenv('TAX_RATE', 0))
+        total = subtotal - discount_amount + tax_amount
+
         return {
             'total_items': total_items,
             'subtotal': subtotal,
@@ -348,7 +368,7 @@ def open_sales_window(current_user: str):
     button_frame = tk.Frame(controls_frame, bg=Theme.BG_FRAME)
     button_frame.pack(fill="x", padx=15, pady=(0, 10))
 
-    def add_to_cart(item_id, brand, size, price, stock):
+    def add_to_cart(item_id, brand, size, price, stock, sales_tax=True, discount_ok=True):
         # Check if item already in cart
         for cart_item in cart_items:
             if cart_item['item_id'] == item_id:
@@ -375,7 +395,9 @@ def open_sales_window(current_user: str):
             'size': size,
             'price': price,
             'quantity': 1,
-            'stock': stock
+            'stock': stock,
+            'sales_tax': sales_tax,
+            'discount_ok': discount_ok,
         })
 
         cart_tree.insert("", "end", values=(
@@ -432,6 +454,8 @@ def open_sales_window(current_user: str):
                 'quantity': 1,
                 'stock': None,
                 'is_custom': True,
+                'sales_tax': True,
+                'discount_ok': True,
             })
             cart_tree.insert("", "end", values=(
                 f"{name} (Custom)",
@@ -453,6 +477,23 @@ def open_sales_window(current_user: str):
             **Theme.button_style(), width=10
         ).pack(side="left", padx=5)
 
+    def fetch_item_flags(item_id):
+        try:
+            conn = get_conn()
+            with conn.cursor() as cur:
+                cur.execute("SELECT sales_tax, discount_ok FROM items WHERE item_id = %s", (item_id,))
+                row = cur.fetchone()
+            conn.close()
+            if row:
+                sales_tax, discount_ok = row
+                return (
+                    bool(sales_tax) if sales_tax is not None else True,
+                    bool(discount_ok) if discount_ok is not None else True,
+                )
+        except Exception:
+            pass
+        return True, True
+
     def add_selected_to_cart():
         selected = product_tree.selection()
         if not selected:
@@ -460,12 +501,16 @@ def open_sales_window(current_user: str):
             return
 
         item = product_tree.item(selected[0])
+        item_id = item['values'][0]
+        sales_tax, discount_ok = fetch_item_flags(item_id)
         add_to_cart(
-            item['values'][0],
+            item_id,
             item['values'][1],
             item['values'][2],
             float(item['values'][3]),
             int(item['values'][4]),
+            sales_tax,
+            discount_ok,
         )
 
     def remove_from_cart():
@@ -825,7 +870,7 @@ def open_sales_window(current_user: str):
             conn = get_conn()
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT i.item_id, i.brand, i.size, i.price, inv.quantity
+                    SELECT i.item_id, i.brand, i.size, i.price, inv.quantity, i.sales_tax, i.discount_ok
                     FROM items i
                     LEFT JOIN inventory inv ON i.item_id = inv.item_id
                     WHERE i.barcode = %s
@@ -842,13 +887,15 @@ def open_sales_window(current_user: str):
             barcode_entry.focus_set()
             return
 
-        item_id, brand, size, price, quantity = row
+        item_id, brand, size, price, quantity, sales_tax, discount_ok = row
         added = add_to_cart(
             item_id,
             brand or "",
             size or "",
             float(price) if price else 0.0,
             quantity if quantity is not None else 0,
+            bool(sales_tax) if sales_tax is not None else True,
+            bool(discount_ok) if discount_ok is not None else True,
         )
         if added:
             barcode_entry.delete(0, tk.END)

@@ -67,6 +67,46 @@ def setup_database():
                 )
             """)
 
+            # Create suppliers table (matches live schema — items.supplier_id references it)
+            print("Creating suppliers table...")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS suppliers (
+                    supplier_id SERIAL PRIMARY KEY,
+                    company_name TEXT,
+                    contact TEXT,
+                    address TEXT,
+                    city_st_zip TEXT,
+                    phone TEXT,
+                    email TEXT
+                )
+            """)
+
+            # Create items table (matches live schema, seeded historically via Excel import)
+            print("Creating items table...")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS items (
+                    item_id SERIAL PRIMARY KEY,
+                    barcode TEXT,
+                    supplier_id INTEGER REFERENCES suppliers(supplier_id),
+                    brand TEXT,
+                    size TEXT,
+                    price DOUBLE PRECISION,
+                    cost DOUBLE PRECISION,
+                    type TEXT
+                )
+            """)
+
+            # Create inventory table
+            print("Creating inventory table...")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS inventory (
+                    inv_id SERIAL PRIMARY KEY,
+                    item_id INTEGER REFERENCES items(item_id),
+                    barcode VARCHAR(100),
+                    quantity INTEGER NOT NULL DEFAULT 0
+                )
+            """)
+
             # Reconcile columns/constraints on tables that already existed
             # before this schema was updated (safe to re-run any number of times).
             print("Reconciling existing table columns...")
@@ -79,6 +119,44 @@ def setup_database():
             cur.execute("ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS item_name VARCHAR(255)")
             cur.execute("ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS is_custom BOOLEAN NOT NULL DEFAULT FALSE")
             cur.execute("ALTER TABLE sale_items ALTER COLUMN item_id DROP NOT NULL")
+
+            # New item fields for the Inventory screen (legacy-parity build)
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS description TEXT")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS class VARCHAR(50)")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS case_qty INTEGER")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS bin_number VARCHAR(50)")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS vendor_item VARCHAR(100)")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS item_notes TEXT")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS par_level INTEGER NOT NULL DEFAULT 0")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS reorder_pt INTEGER NOT NULL DEFAULT 0")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS on_order INTEGER NOT NULL DEFAULT 0")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS order_lot VARCHAR(10) NOT NULL DEFAULT 'case'")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS last_order_date DATE")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS last_receive_date DATE")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS deposit_sale_enabled BOOLEAN NOT NULL DEFAULT FALSE")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS deposit_sale_amount DECIMAL(10,2) NOT NULL DEFAULT 0")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS deposit_return_enabled BOOLEAN NOT NULL DEFAULT FALSE")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS deposit_return_amount DECIMAL(10,2) NOT NULL DEFAULT 0")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS sales_tax BOOLEAN NOT NULL DEFAULT TRUE")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS discount_ok BOOLEAN NOT NULL DEFAULT TRUE")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS last_cost DECIMAL(10,2)")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS case_cost DECIMAL(10,2)")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS last_case_cost DECIMAL(10,2)")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS case_price DECIMAL(10,2)")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS twofer_price DECIMAL(10,2)")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS threefer_price DECIMAL(10,2)")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS disc_pool VARCHAR(50)")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS image_path VARCHAR(500)")
+
+            # items.item_id predates this script (seeded via Excel import) and was
+            # created without an auto-increment sequence, so CREATE TABLE IF NOT
+            # EXISTS above never gave it one. Attach one now so new rows get an
+            # item_id without the app specifying it. (inventory.inv_id is already
+            # a GENERATED ALWAYS AS IDENTITY column — no fix needed there.)
+            print("Ensuring auto-increment sequence on items.item_id...")
+            cur.execute("CREATE SEQUENCE IF NOT EXISTS items_item_id_seq OWNED BY items.item_id")
+            cur.execute("SELECT setval('items_item_id_seq', COALESCE((SELECT MAX(item_id) FROM items), 0) + 1, false)")
+            cur.execute("ALTER TABLE items ALTER COLUMN item_id SET DEFAULT nextval('items_item_id_seq')")
 
             # Create indexes for better performance
             print("Creating indexes...")
