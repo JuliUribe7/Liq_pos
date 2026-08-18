@@ -3,11 +3,18 @@ import tkinter as tk
 from tkinter import messagebox
 from theme import Theme, bind_hover_effect
 
-def open_dashboard(current_user: str, role: str):
+def open_dashboard(current_user: str, role: str, root=None):
     win = tk.Toplevel()
     win.title(f"LiquorPOS – Dashboard ({role})")
     win.geometry("900x600")
     win.config(**Theme.window_style())
+
+    def quit_app():
+        win.destroy()
+        if root is not None:
+            root.destroy()
+
+    win.protocol("WM_DELETE_WINDOW", quit_app)
 
     # Header section
     header_frame = tk.Frame(win, bg=Theme.BG_DARK)
@@ -134,6 +141,8 @@ def open_dashboard(current_user: str, role: str):
         def logout():
             settings_win.destroy()
             win.destroy()
+            if root is not None:
+                root.deiconify()
 
         tk.Button(
             settings_frame,
@@ -174,5 +183,3 @@ def open_dashboard(current_user: str, role: str):
     x = (win.winfo_screenwidth() // 2) - (win.winfo_width() // 2)
     y = (win.winfo_screenheight() // 2) - (win.winfo_height() // 2)
     win.geometry(f'+{x}+{y}')
-
-    win.mainloop()

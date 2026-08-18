@@ -44,11 +44,13 @@ def setup_database():
                     subtotal DECIMAL(10,2) NOT NULL DEFAULT 0,
                     discount_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
                     tax_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+                    deposit_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
                     total_amount DECIMAL(10,2) NOT NULL,
                     cashier VARCHAR(100) NOT NULL,
                     payment_method VARCHAR(50) DEFAULT 'cash',
                     cash_tendered DECIMAL(10,2),
-                    change_due DECIMAL(10,2)
+                    change_due DECIMAL(10,2),
+                    status VARCHAR(20) NOT NULL DEFAULT 'complete'
                 )
             """)
 
@@ -116,6 +118,8 @@ def setup_database():
             cur.execute("ALTER TABLE sales ADD COLUMN IF NOT EXISTS payment_method VARCHAR(50) DEFAULT 'cash'")
             cur.execute("ALTER TABLE sales ADD COLUMN IF NOT EXISTS cash_tendered DECIMAL(10,2)")
             cur.execute("ALTER TABLE sales ADD COLUMN IF NOT EXISTS change_due DECIMAL(10,2)")
+            cur.execute("ALTER TABLE sales ADD COLUMN IF NOT EXISTS deposit_amount DECIMAL(10,2) NOT NULL DEFAULT 0")
+            cur.execute("ALTER TABLE sales ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'complete'")
             cur.execute("ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS item_name VARCHAR(255)")
             cur.execute("ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS is_custom BOOLEAN NOT NULL DEFAULT FALSE")
             cur.execute("ALTER TABLE sale_items ALTER COLUMN item_id DROP NOT NULL")

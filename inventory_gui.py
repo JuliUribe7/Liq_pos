@@ -40,6 +40,11 @@ def _fmt_date(value):
 
 
 def _make_scrollable(parent, bg):
+    """Returns (inner_frame, canvas). Caller is responsible for wiring up
+    mousewheel scrolling centrally (see _open_item_detail_dialog) — binding
+    it here per-canvas via bind_all on Enter/Leave is unreliable across
+    ttk.Notebook tab switches and dialog teardown, since Leave doesn't
+    reliably fire when a tab is hidden or the dialog is closed."""
     canvas = tk.Canvas(parent, bg=bg, highlightthickness=0)
     vsb = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
     canvas.configure(yscrollcommand=vsb.set)
@@ -57,12 +62,7 @@ def _make_scrollable(parent, bg):
         canvas.itemconfig(window_id, width=event.width)
     canvas.bind("<Configure>", _on_canvas_configure)
 
-    def _on_mousewheel(event):
-        canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-    canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _on_mousewheel))
-    canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
-
-    return inner
+    return inner, canvas
 
 
 def _section_label(parent, text):
@@ -164,7 +164,12 @@ def _fetch_computed_stats(item_id):
 def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=None, item_list=None, on_saved=None):
     item_list = item_list or []
     suppliers = _fetch_suppliers()
-    supplier_name_to_id = {name: sid for sid, name in suppliers}
+    # Keys are trimmed so vendor names with stray leading/trailing whitespace
+    # (real data quality issue in the legacy import) still match on lookup.
+    # Duplicate names (e.g. multiple "EMPIRE MERCHANTS" rows) are inherently
+    # ambiguous by name alone — see supplier_id tracking below, which avoids
+    # ever re-resolving by name unless the user actually changes the field.
+    supplier_name_to_id = {name.strip(): sid for sid, name in suppliers}
 
     dialog = tk.Toplevel(parent_win)
     dialog.title("Item Details")
@@ -172,7 +177,10 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
     dialog.config(bg=Theme.BG_DARK)
     dialog.transient(parent_win)
 
-    state = {'item_id': item_id, 'mode': mode}
+    # state['supplier_id']/['vendor_loaded_name'] track the vendor as actually
+    # loaded from the DB, independent of the combobox's displayed text, so
+    # re-saving without touching Vendor never risks losing/reassigning it.
+    state = {'item_id': item_id, 'mode': mode, 'supplier_id': None, 'vendor_loaded_name': ""}
 
     # --- Top nav/status bar ---
     nav_frame = tk.Frame(dialog, bg=Theme.BG_DARK)
@@ -206,8 +214,14 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
     notebook.add(details_tab, text="Details")
     notebook.add(costs_tab, text="Costs & Pricing")
 
+    # Mousewheel scrolling is wired once, centrally, for the whole dialog
+    # (see below the tabs) rather than per-canvas — this is what keeps it
+    # working reliably across tab switches and dialog close/reopen.
+    tab_canvases = {}
+
     # ================= Details tab =================
-    details_inner = _make_scrollable(details_tab, Theme.BG_FRAME)
+    details_inner, details_canvas = _make_scrollable(details_tab, Theme.BG_FRAME)
+    tab_canvases[details_tab] = details_canvas
 
     brand_var = tk.StringVar()
     description_var = tk.StringVar()
@@ -243,6 +257,18 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
     _section_label(details_inner, "Vendor & Purchasing")
     vendor_combo = _field_row(details_inner, "Vendor", lambda p: ttk.Combobox(
         p, textvariable=vendor_var, values=[name for _, name in suppliers], state="normal"))
+
+    def on_vendor_selected(event=None):
+        # Selecting from the dropdown resolves by exact index into `suppliers`,
+        # not by name text — this is unambiguous even when multiple suppliers
+        # share the same (or whitespace-variant) name.
+        idx = vendor_combo.current()
+        if 0 <= idx < len(suppliers):
+            sid, name = suppliers[idx]
+            state['supplier_id'] = sid
+            state['vendor_loaded_name'] = name.strip()
+
+    vendor_combo.bind("<<ComboboxSelected>>", on_vendor_selected)
     _field_row(details_inner, "Vendor Item", lambda p: tk.Entry(p, textvariable=vendor_item_var, **Theme.entry_style()))
     _field_row(details_inner, "Last Order (YYYY-MM-DD)", lambda p: tk.Entry(p, textvariable=last_order_var, **Theme.entry_style()))
     _field_row(details_inner, "Last Receive (YYYY-MM-DD)", lambda p: tk.Entry(p, textvariable=last_receive_var, **Theme.entry_style()))
@@ -295,7 +321,8 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
     stats_label.pack(fill="x", padx=15, pady=(0, 15))
 
     # ================= Costs & Pricing tab =================
-    costs_inner = _make_scrollable(costs_tab, Theme.BG_FRAME)
+    costs_inner, costs_canvas = _make_scrollable(costs_tab, Theme.BG_FRAME)
+    tab_canvases[costs_tab] = costs_canvas
 
     unit_cost_var = tk.StringVar(value="0.00")
     case_cost_var = tk.StringVar(value="0.00")
@@ -352,10 +379,14 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
         size_var.set((data.get('size') if data else "") or "")
         case_qty_var.set(str(data.get('case_qty')) if data and data.get('case_qty') is not None else "")
         vendor_var.set("")
+        state['supplier_id'] = None
+        state['vendor_loaded_name'] = ""
         if data and data.get('supplier_id'):
             for sid, name in suppliers:
                 if sid == data['supplier_id']:
                     vendor_var.set(name)
+                    state['supplier_id'] = sid
+                    state['vendor_loaded_name'] = name.strip()
                     break
         vendor_item_var.set((data.get('vendor_item') if data else "") or "")
         barcode_var.set((data.get('barcode') if data else prefill_barcode) or "")
@@ -443,9 +474,27 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
         if not brand:
             messagebox.showerror("Missing Brand", "Brand is required.", parent=dialog)
             return
+        vendor_text = vendor_var.get().strip()
+        if not vendor_text:
+            supplier_id = None
+        elif vendor_text == state['vendor_loaded_name']:
+            # Field wasn't actually changed from what was loaded — keep the
+            # originally-loaded supplier_id rather than re-resolving by name
+            # (name text alone is ambiguous: several suppliers share names
+            # like "EMPIRE MERCHANTS", and some have stray whitespace).
+            supplier_id = state['supplier_id']
+        elif vendor_text in supplier_name_to_id:
+            supplier_id = supplier_name_to_id[vendor_text]
+        else:
+            messagebox.showerror(
+                "Unknown Vendor",
+                f"\"{vendor_text}\" doesn't match any vendor. Pick one from the dropdown.",
+                parent=dialog
+            )
+            return
+
         try:
             barcode = barcode_var.get().strip() or None
-            supplier_id = supplier_name_to_id.get(vendor_var.get().strip())
             size = size_var.get().strip() or None
             item_type = type_var.get().strip() or None
             description = description_var.get().strip() or None
@@ -476,6 +525,7 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
             messagebox.showerror("Invalid Value", f"Please check numeric/date fields: {e}", parent=dialog)
             return
 
+        conn = None
         try:
             conn = get_conn()
             with conn.cursor() as cur:
@@ -545,6 +595,12 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
                 conn.commit()
             conn.close()
         except Exception as e:
+            if conn is not None:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                conn.close()
             messagebox.showerror("Error", f"Failed to save item: {str(e)}", parent=dialog)
             return
 
@@ -563,6 +619,29 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
     close_btn = tk.Button(btn_frame, text="Close", command=do_close, **Theme.button_style(), width=14)
     close_btn.pack(side="left")
     bind_hover_effect(close_btn)
+
+    def _dialog_mousewheel(event):
+        # bind_all is process-wide, so if another dialog/window also has a
+        # wheel handler bound, only act when the event actually belongs to
+        # this dialog (otherwise, do nothing rather than scroll the wrong canvas).
+        try:
+            if event.widget.winfo_toplevel() is not dialog:
+                return
+            active_tab = notebook.nametowidget(notebook.select())
+        except Exception:
+            return
+        canvas = tab_canvases.get(active_tab)
+        if canvas is not None:
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    dialog.bind_all("<MouseWheel>", _dialog_mousewheel)
+
+    def _cleanup_mousewheel(event=None):
+        try:
+            dialog.unbind_all("<MouseWheel>")
+        except Exception:
+            pass
+    dialog.bind("<Destroy>", _cleanup_mousewheel)
 
     dialog.grab_set()
     load_item(item_id)
@@ -644,41 +723,6 @@ def open_inventory_window():
     )
     refresh_btn.pack(side="left", padx=5)
     bind_hover_effect(refresh_btn)
-
-    tk.Label(
-        search_inner,
-        text="Scan Barcode:",
-        bg=Theme.BG_FRAME,
-        fg=Theme.TEXT_PRIMARY,
-        font=(Theme.FONT_FAMILY, 11, 'bold')
-    ).pack(side="left", padx=(30, 10))
-
-    inv_barcode_entry = tk.Entry(search_inner, **Theme.entry_style(), width=20)
-    inv_barcode_entry.pack(side="left", padx=5, ipady=6)
-
-    def on_inventory_barcode_scan(event=None):
-        barcode = inv_barcode_entry.get().strip()
-        if not barcode:
-            return
-        try:
-            conn = get_conn()
-            with conn.cursor() as cur:
-                cur.execute("SELECT item_id FROM items WHERE barcode = %s", (barcode,))
-                row = cur.fetchone()
-            conn.close()
-        except Exception as e:
-            messagebox.showerror("Error", f"Barcode lookup failed: {str(e)}")
-            inv_barcode_entry.focus_set()
-            return
-        inv_barcode_entry.delete(0, tk.END)
-        inv_barcode_entry.focus_set()
-        if row:
-            open_item_dialog(mode="edit", item_id=row[0])
-        else:
-            if messagebox.askyesno("Not Found", f"No item found for barcode {barcode}. Create a new item with this barcode?"):
-                open_item_dialog(mode="new", prefill_barcode=barcode)
-
-    inv_barcode_entry.bind('<Return>', on_inventory_barcode_scan)
 
     # Treeview Frame
     tree_frame = tk.Frame(main_container, **Theme.frame_style())
@@ -828,6 +872,7 @@ def open_inventory_window():
         if not messagebox.askyesno("Confirm Delete", "Delete this item permanently?"):
             return
 
+        conn = None
         try:
             conn = get_conn()
             with conn.cursor() as cur:
@@ -838,6 +883,12 @@ def open_inventory_window():
             messagebox.showinfo("Deleted", "Item deleted.")
             load_inventory(search_entry.get().strip())
         except Exception as e:
+            if conn is not None:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                conn.close()
             messagebox.showerror("Error", f"Failed to delete item: {str(e)}")
 
     make_toolbar_btn("Delete", delete_item)

@@ -184,10 +184,27 @@ def open_sales_window(current_user: str):
         controls_canvas.itemconfig(controls_window, width=event.width)
     controls_canvas.bind("<Configure>", _controls_canvas_resize)
 
+    # Bound once for the window's lifetime (not via Enter/Leave bind_all
+    # toggling, which can leave a stale global binding if the window closes
+    # while the mouse is still over the canvas) and cleaned up on close.
     def _controls_mousewheel(event):
+        # bind_all is process-wide, so if another window's dialog also has a
+        # wheel handler bound, only act when the event actually belongs to
+        # this window (otherwise, do nothing rather than scroll the wrong canvas).
+        try:
+            if event.widget.winfo_toplevel() is not win:
+                return
+        except Exception:
+            return
         controls_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-    controls_canvas.bind("<Enter>", lambda e: controls_canvas.bind_all("<MouseWheel>", _controls_mousewheel))
-    controls_canvas.bind("<Leave>", lambda e: controls_canvas.unbind_all("<MouseWheel>"))
+    win.bind_all("<MouseWheel>", _controls_mousewheel)
+
+    def _cleanup_controls_mousewheel(event=None):
+        try:
+            win.unbind_all("<MouseWheel>")
+        except Exception:
+            pass
+    win.bind("<Destroy>", _cleanup_controls_mousewheel)
 
     # Cart data storage
     cart_items = []
@@ -230,6 +247,7 @@ def open_sales_window(current_user: str):
     subtotal_value_label = _breakdown_row(1, "Subtotal")
     discount_value_label = _breakdown_row(2, "Discount")
     tax_value_label = _breakdown_row(3, "Tax")
+    deposit_value_label = _breakdown_row(4, "Deposit")
 
     tk.Frame(total_frame, bg=Theme.BORDER_DEFAULT, height=1).pack(fill="x", pady=8)
 
@@ -272,13 +290,21 @@ def open_sales_window(current_user: str):
                 taxable_base += post_discount
 
         tax_amount = taxable_base * float(os.getenv('TAX_RATE', 0))
-        total = subtotal - discount_amount + tax_amount
+
+        # Bottle deposits are not taxed — added on top of the tax-inclusive total.
+        deposit_amount = sum(
+            item['quantity'] * item.get('deposit_amount', 0)
+            for item in cart_items if item.get('deposit_enabled', False)
+        )
+
+        total = subtotal - discount_amount + tax_amount + deposit_amount
 
         return {
             'total_items': total_items,
             'subtotal': subtotal,
             'discount_amount': discount_amount,
             'tax_amount': tax_amount,
+            'deposit_amount': deposit_amount,
             'total': total,
         }
 
@@ -290,6 +316,7 @@ def open_sales_window(current_user: str):
             text=f"-${totals['discount_amount']:.2f}" if totals['discount_amount'] > 0 else "$0.00"
         )
         tax_value_label.config(text=f"${totals['tax_amount']:.2f}")
+        deposit_value_label.config(text=f"${totals['deposit_amount']:.2f}")
         total_label.config(text=f"Total: ${totals['total']:.2f}")
 
     def open_discount_dialog():
@@ -368,7 +395,8 @@ def open_sales_window(current_user: str):
     button_frame = tk.Frame(controls_frame, bg=Theme.BG_FRAME)
     button_frame.pack(fill="x", padx=15, pady=(0, 10))
 
-    def add_to_cart(item_id, brand, size, price, stock, sales_tax=True, discount_ok=True):
+    def add_to_cart(item_id, brand, size, price, stock, sales_tax=True, discount_ok=True,
+                     deposit_enabled=False, deposit_amount=0.0):
         # Check if item already in cart
         for cart_item in cart_items:
             if cart_item['item_id'] == item_id:
@@ -398,6 +426,8 @@ def open_sales_window(current_user: str):
             'stock': stock,
             'sales_tax': sales_tax,
             'discount_ok': discount_ok,
+            'deposit_enabled': deposit_enabled,
+            'deposit_amount': deposit_amount,
         })
 
         cart_tree.insert("", "end", values=(
@@ -456,6 +486,8 @@ def open_sales_window(current_user: str):
                 'is_custom': True,
                 'sales_tax': True,
                 'discount_ok': True,
+                'deposit_enabled': False,
+                'deposit_amount': 0.0,
             })
             cart_tree.insert("", "end", values=(
                 f"{name} (Custom)",
@@ -481,18 +513,23 @@ def open_sales_window(current_user: str):
         try:
             conn = get_conn()
             with conn.cursor() as cur:
-                cur.execute("SELECT sales_tax, discount_ok FROM items WHERE item_id = %s", (item_id,))
+                cur.execute("""
+                    SELECT sales_tax, discount_ok, deposit_sale_enabled, deposit_sale_amount
+                    FROM items WHERE item_id = %s
+                """, (item_id,))
                 row = cur.fetchone()
             conn.close()
             if row:
-                sales_tax, discount_ok = row
+                sales_tax, discount_ok, deposit_enabled, deposit_amount = row
                 return (
                     bool(sales_tax) if sales_tax is not None else True,
                     bool(discount_ok) if discount_ok is not None else True,
+                    bool(deposit_enabled) if deposit_enabled is not None else False,
+                    float(deposit_amount) if deposit_amount is not None else 0.0,
                 )
         except Exception:
             pass
-        return True, True
+        return True, True, False, 0.0
 
     def add_selected_to_cart():
         selected = product_tree.selection()
@@ -502,7 +539,7 @@ def open_sales_window(current_user: str):
 
         item = product_tree.item(selected[0])
         item_id = item['values'][0]
-        sales_tax, discount_ok = fetch_item_flags(item_id)
+        sales_tax, discount_ok, deposit_enabled, deposit_amount = fetch_item_flags(item_id)
         add_to_cart(
             item_id,
             item['values'][1],
@@ -511,6 +548,8 @@ def open_sales_window(current_user: str):
             int(item['values'][4]),
             sales_tax,
             discount_ok,
+            deposit_enabled,
+            deposit_amount,
         )
 
     def remove_from_cart():
@@ -532,6 +571,7 @@ def open_sales_window(current_user: str):
         update_total()
 
     def perform_checkout(payment_method, cash_tendered, change_due):
+        conn = None
         try:
             conn = get_conn()
             with conn.cursor() as cur:
@@ -540,13 +580,14 @@ def open_sales_window(current_user: str):
                 totals = calculate_totals()
 
                 cur.execute("""
-                    INSERT INTO sales (subtotal, discount_amount, tax_amount, total_amount, cashier, payment_method, cash_tendered, change_due)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO sales (subtotal, discount_amount, tax_amount, deposit_amount, total_amount, cashier, payment_method, cash_tendered, change_due)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING sale_id
                 """, (
                     totals['subtotal'],
                     totals['discount_amount'],
                     totals['tax_amount'],
+                    totals['deposit_amount'],
                     totals['total'],
                     current_user,
                     payment_method,
@@ -585,6 +626,12 @@ def open_sales_window(current_user: str):
             return True
 
         except Exception as e:
+            if conn is not None:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                conn.close()
             messagebox.showerror("Error", f"Checkout failed: {str(e)}")
             return False
 
@@ -870,7 +917,8 @@ def open_sales_window(current_user: str):
             conn = get_conn()
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT i.item_id, i.brand, i.size, i.price, inv.quantity, i.sales_tax, i.discount_ok
+                    SELECT i.item_id, i.brand, i.size, i.price, inv.quantity, i.sales_tax, i.discount_ok,
+                           i.deposit_sale_enabled, i.deposit_sale_amount
                     FROM items i
                     LEFT JOIN inventory inv ON i.item_id = inv.item_id
                     WHERE i.barcode = %s
@@ -887,7 +935,7 @@ def open_sales_window(current_user: str):
             barcode_entry.focus_set()
             return
 
-        item_id, brand, size, price, quantity, sales_tax, discount_ok = row
+        item_id, brand, size, price, quantity, sales_tax, discount_ok, deposit_enabled, deposit_amount = row
         added = add_to_cart(
             item_id,
             brand or "",
@@ -896,6 +944,8 @@ def open_sales_window(current_user: str):
             quantity if quantity is not None else 0,
             bool(sales_tax) if sales_tax is not None else True,
             bool(discount_ok) if discount_ok is not None else True,
+            bool(deposit_enabled) if deposit_enabled is not None else False,
+            float(deposit_amount) if deposit_amount is not None else 0.0,
         )
         if added:
             barcode_entry.delete(0, tk.END)

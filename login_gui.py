@@ -236,7 +236,7 @@ def run_login():
         if ok:
             role = msg
             root.withdraw()
-            open_dashboard(current_user=e_user.get(), role=role)
+            open_dashboard(current_user=e_user.get(), role=role, root=root)
         else:
             messagebox.showerror("Login Failed", msg)
             e_pass.delete(0, tk.END)

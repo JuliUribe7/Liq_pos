@@ -108,33 +108,35 @@ def open_reports_window():
                     date_filter = "1=1"
 
                 query = f"""
-                    SELECT 
+                    SELECT
                         s.sale_id,
                         s.sale_date,
                         s.cashier,
                         s.total_amount,
-                        COUNT(si.sale_item_id) as items_count
+                        COUNT(si.sale_item_id) as items_count,
+                        s.status
                     FROM sales s
                     LEFT JOIN sale_items si ON s.sale_id = si.sale_id
                     WHERE {date_filter}
-                    GROUP BY s.sale_id, s.sale_date, s.cashier, s.total_amount
+                    GROUP BY s.sale_id, s.sale_date, s.cashier, s.total_amount, s.status
                     ORDER BY s.sale_date DESC
                 """
-                
+
                 cur.execute(query)
                 rows = cur.fetchall()
-                
+
                 total_sales = 0
                 total_transactions = 0
-                
+
                 for row in rows:
-                    sale_id, sale_date, cashier, total, items = row
+                    sale_id, sale_date, cashier, total, items, status = row
                     sales_tree.insert("", "end", values=(
                         sale_id,
                         sale_date.strftime("%Y-%m-%d %H:%M") if sale_date else "",
                         cashier or "",
                         f"${total:.2f}" if total else "$0.00",
-                        items or 0
+                        items or 0,
+                        status or "complete"
                     ))
                     total_sales += total if total else 0
                     total_transactions += 1
@@ -169,7 +171,7 @@ def open_reports_window():
     sales_scroll = ttk.Scrollbar(tree_frame)
     sales_scroll.pack(side="right", fill="y")
 
-    sales_columns = ("Sale ID", "Date", "Cashier", "Total", "Items")
+    sales_columns = ("Sale ID", "Date", "Cashier", "Total", "Items", "Status")
     sales_tree = ttk.Treeview(
         tree_frame,
         columns=sales_columns,
@@ -183,14 +185,62 @@ def open_reports_window():
     sales_tree.heading("Cashier", text="Cashier")
     sales_tree.heading("Total", text="Total")
     sales_tree.heading("Items", text="Items Count")
+    sales_tree.heading("Status", text="Status")
 
     sales_tree.column("Sale ID", width=80)
     sales_tree.column("Date", width=150)
     sales_tree.column("Cashier", width=150)
     sales_tree.column("Total", width=120)
     sales_tree.column("Items", width=120)
+    sales_tree.column("Status", width=100)
 
     sales_tree.pack(side="left", fill="both", expand=True)
+
+    def void_selected_sale():
+        selected = sales_tree.selection()
+        if not selected:
+            messagebox.showwarning("No Selection", "Please select a sale to void.")
+            return
+
+        values = sales_tree.item(selected[0])['values']
+        sale_id, current_status = values[0], values[5]
+        if current_status == "incomplete":
+            messagebox.showinfo("Already Voided", "This sale is already marked incomplete.")
+            return
+
+        if not messagebox.askyesno(
+            "Void Sale",
+            f"Mark Sale ID {sale_id} as incomplete? This only flags the record — "
+            "it does not restock inventory or adjust cash totals."
+        ):
+            return
+
+        conn = None
+        try:
+            conn = get_conn()
+            with conn.cursor() as cur:
+                cur.execute("UPDATE sales SET status = 'incomplete' WHERE sale_id = %s", (sale_id,))
+                conn.commit()
+            conn.close()
+            load_sales_report()
+        except Exception as e:
+            if conn is not None:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                conn.close()
+            messagebox.showerror("Error", f"Failed to void sale: {str(e)}")
+
+    void_btn = tk.Button(
+        sales_tab,
+        text="Void Selected Sale",
+        command=void_selected_sale,
+        **Theme.button_style(),
+        width=18
+    )
+    void_btn.pack(pady=(0, 10))
+    bind_hover_effect(void_btn)
 
     # Summary label
     summary_label = tk.Label(
@@ -259,7 +309,11 @@ def open_reports_window():
                 total_stock = cur.fetchone()[0]
                 stat_labels["Total Stock"].config(text=str(total_stock))
 
-                cur.execute("SELECT COUNT(*) FROM inventory WHERE quantity <= 5 AND quantity > 0")
+                cur.execute("""
+                    SELECT COUNT(*) FROM inventory inv
+                    JOIN items i ON i.item_id = inv.item_id
+                    WHERE inv.quantity > 0 AND inv.quantity <= COALESCE(NULLIF(i.reorder_pt, 0), 5)
+                """)
                 low_stock = cur.fetchone()[0]
                 stat_labels["Low Stock"].config(text=str(low_stock))
 
