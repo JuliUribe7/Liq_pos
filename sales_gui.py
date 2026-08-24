@@ -45,6 +45,23 @@ def open_sales_window(current_user: str):
         **Theme.secondary_label_style()
     ).pack()
 
+    # Alcohol/tobacco age cutoff — recomputed from today's date every time the
+    # screen opens, so it's always correct without needing to be updated by hand.
+    today = datetime.now().date()
+    try:
+        cutoff_date = today.replace(year=today.year - 21)
+    except ValueError:
+        # today is Feb 29 and (today.year - 21) isn't a leap year
+        cutoff_date = today.replace(month=2, day=28, year=today.year - 21)
+
+    tk.Label(
+        header_frame,
+        text=f"Must be born on or before {cutoff_date.strftime('%B %d, %Y')} to purchase alcohol/tobacco",
+        bg=Theme.BG_DARK,
+        fg=Theme.TEXT_WARNING,
+        font=(Theme.FONT_FAMILY, Theme.FONT_SIZE_SMALL, "bold")
+    ).pack(pady=(5, 0))
+
     # Main container
     main_frame = tk.Frame(win, bg=Theme.BG_DARK)
     main_frame.pack(fill="both", expand=True, padx=20, pady=10)
