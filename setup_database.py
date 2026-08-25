@@ -144,6 +144,7 @@ def setup_database():
             cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS sales_tax BOOLEAN NOT NULL DEFAULT TRUE")
             cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS discount_ok BOOLEAN NOT NULL DEFAULT TRUE")
             cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS last_cost DECIMAL(10,2)")
+            cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS avg_cost DECIMAL(10,2)")
             cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS case_cost DECIMAL(10,2)")
             cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS last_case_cost DECIMAL(10,2)")
             cur.execute("ALTER TABLE items ADD COLUMN IF NOT EXISTS case_price DECIMAL(10,2)")

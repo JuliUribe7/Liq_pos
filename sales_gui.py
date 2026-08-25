@@ -29,15 +29,7 @@ def open_sales_window(current_user: str):
 
     # Header
     header_frame = tk.Frame(win, bg=Theme.BG_DARK)
-    header_frame.pack(fill='x', pady=(20, 10))
-
-    tk.Label(
-        header_frame,
-        text="Point of Sale",
-        bg=Theme.BG_DARK,
-        fg=Theme.ACCENT_GOLD,
-        font=(Theme.FONT_FAMILY, 20, "bold")
-    ).pack()
+    header_frame.pack(fill='x', pady=(10, 5))
 
     tk.Label(
         header_frame,
@@ -66,91 +58,32 @@ def open_sales_window(current_user: str):
     main_frame = tk.Frame(win, bg=Theme.BG_DARK)
     main_frame.pack(fill="both", expand=True, padx=20, pady=10)
 
-    # Left side - Product search and selection
-    left_frame = tk.Frame(main_frame, **Theme.frame_style())
-    left_frame.pack(side="left", fill="both", expand=True, padx=(0, 10))
+    # ---- Bottom strip (packed first so the cart above it gets the leftover
+    # space) — scan/buttons on the left, totals/checkout on the right ----
+    bottom_frame = tk.Frame(main_frame, bg=Theme.BG_DARK)
+    bottom_frame.pack(side="bottom", fill="x", pady=(10, 0))
 
-    # Search section
-    search_frame = tk.Frame(left_frame, bg=Theme.BG_FRAME)
-    search_frame.pack(pady=15, padx=15, fill="x")
+    left_panel = tk.Frame(bottom_frame, **Theme.frame_style())
+    left_panel.pack(side="left", fill="both", expand=True, padx=(0, 10))
 
-    tk.Label(
-        search_frame,
-        text="Scan Barcode:",
-        bg=Theme.BG_FRAME,
-        fg=Theme.TEXT_PRIMARY,
-        font=(Theme.FONT_FAMILY, 11, 'bold')
-    ).pack(anchor="w", pady=(0, 5))
+    right_panel = tk.Frame(bottom_frame, **Theme.frame_style(), width=380)
+    right_panel.pack(side="right", fill="y")
+    right_panel.pack_propagate(False)
 
-    barcode_entry = tk.Entry(search_frame, **Theme.entry_style())
-    barcode_entry.pack(fill="x", pady=5, ipady=6)
+    # ---- Shopping cart — the main, wide focus of the screen ----
+    cart_panel = tk.Frame(main_frame, **Theme.frame_style())
+    cart_panel.pack(side="top", fill="both", expand=True)
 
     tk.Label(
-        search_frame,
-        text="Search Product:",
-        bg=Theme.BG_FRAME,
-        fg=Theme.TEXT_PRIMARY,
-        font=(Theme.FONT_FAMILY, 11, 'bold')
-    ).pack(anchor="w", pady=(0, 5))
-
-    search_entry = tk.Entry(search_frame, **Theme.entry_style())
-    search_entry.pack(fill="x", pady=5, ipady=6)
-
-    # Product list
-    tk.Label(
-        left_frame,
-        text="Available Products:",
-        bg=Theme.BG_FRAME,
-        fg=Theme.TEXT_PRIMARY,
-        font=(Theme.FONT_FAMILY, 12, "bold")
-    ).pack(pady=(10, 5), padx=15)
-    
-    product_frame = tk.Frame(left_frame, bg=Theme.BG_FRAME)
-    product_frame.pack(fill="both", expand=True, padx=15, pady=(5, 15))
-
-    product_scroll = ttk.Scrollbar(product_frame)
-    product_scroll.pack(side="right", fill="y")
-
-    product_columns = ("ID", "Brand", "Size", "Price", "Stock")
-    product_tree = ttk.Treeview(
-        product_frame,
-        columns=product_columns,
-        show="headings",
-        yscrollcommand=product_scroll.set,
-        height=18
-    )
-    product_scroll.config(command=product_tree.yview)
-
-    product_tree.heading("ID", text="ID")
-    product_tree.heading("Brand", text="Brand")
-    product_tree.heading("Size", text="Size")
-    product_tree.heading("Price", text="Price")
-    product_tree.heading("Stock", text="Stock")
-
-    product_tree.column("ID", width=50)
-    product_tree.column("Brand", width=300)
-    product_tree.column("Size", width=80)
-    product_tree.column("Price", width=80)
-    product_tree.column("Stock", width=70)
-
-    product_tree.pack(side="left", fill="both", expand=True)
-
-    # Right side - Cart and checkout
-    right_frame = tk.Frame(main_frame, **Theme.frame_style(), width=450)
-    right_frame.pack(side="right", fill="both")
-    right_frame.pack_propagate(False)
-
-    tk.Label(
-        right_frame,
+        cart_panel,
         text="Shopping Cart",
         bg=Theme.BG_FRAME,
         fg=Theme.ACCENT_GOLD,
         font=(Theme.FONT_FAMILY, 14, "bold")
     ).pack(pady=(15, 10))
 
-    # Cart treeview
-    cart_frame = tk.Frame(right_frame, bg=Theme.BG_FRAME)
-    cart_frame.pack(fill="both", expand=True, padx=15)
+    cart_frame = tk.Frame(cart_panel, bg=Theme.BG_FRAME)
+    cart_frame.pack(fill="both", expand=True, padx=15, pady=(0, 15))
 
     cart_scroll = ttk.Scrollbar(cart_frame)
     cart_scroll.pack(side="right", fill="y")
@@ -160,8 +93,7 @@ def open_sales_window(current_user: str):
         cart_frame,
         columns=cart_columns,
         show="headings",
-        yscrollcommand=cart_scroll.set,
-        height=10
+        yscrollcommand=cart_scroll.set
     )
     cart_scroll.config(command=cart_tree.yview)
 
@@ -170,58 +102,12 @@ def open_sales_window(current_user: str):
     cart_tree.heading("Price", text="Price")
     cart_tree.heading("Total", text="Total")
 
-    cart_tree.column("Item", width=200)
-    cart_tree.column("Qty", width=50)
-    cart_tree.column("Price", width=70)
-    cart_tree.column("Total", width=80)
+    cart_tree.column("Item", width=500)
+    cart_tree.column("Qty", width=100, anchor="center")
+    cart_tree.column("Price", width=150, anchor="e")
+    cart_tree.column("Total", width=150, anchor="e")
 
     cart_tree.pack(side="left", fill="both", expand=True)
-
-    # Scrollable controls area (status/breakdown/buttons/checkout) — fixed-height
-    # region with its own scrollbar so future buttons never get clipped off the
-    # bottom of the window and never require manually resizing it.
-    controls_outer = tk.Frame(right_frame, bg=Theme.BG_FRAME)
-    controls_outer.pack(side="bottom", fill="x")
-
-    controls_canvas = tk.Canvas(controls_outer, bg=Theme.BG_FRAME, highlightthickness=0, height=460)
-    controls_canvas.pack(side="left", fill="both", expand=True)
-
-    controls_scroll = ttk.Scrollbar(controls_outer, orient="vertical", command=controls_canvas.yview)
-    controls_scroll.pack(side="right", fill="y")
-    controls_canvas.configure(yscrollcommand=controls_scroll.set)
-
-    controls_frame = tk.Frame(controls_canvas, bg=Theme.BG_FRAME)
-    controls_window = controls_canvas.create_window((0, 0), window=controls_frame, anchor="nw")
-
-    def _controls_configure(event=None):
-        controls_canvas.configure(scrollregion=controls_canvas.bbox("all"))
-    controls_frame.bind("<Configure>", _controls_configure)
-
-    def _controls_canvas_resize(event):
-        controls_canvas.itemconfig(controls_window, width=event.width)
-    controls_canvas.bind("<Configure>", _controls_canvas_resize)
-
-    # Bound once for the window's lifetime (not via Enter/Leave bind_all
-    # toggling, which can leave a stale global binding if the window closes
-    # while the mouse is still over the canvas) and cleaned up on close.
-    def _controls_mousewheel(event):
-        # bind_all is process-wide, so if another window's dialog also has a
-        # wheel handler bound, only act when the event actually belongs to
-        # this window (otherwise, do nothing rather than scroll the wrong canvas).
-        try:
-            if event.widget.winfo_toplevel() is not win:
-                return
-        except Exception:
-            return
-        controls_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-    win.bind_all("<MouseWheel>", _controls_mousewheel)
-
-    def _cleanup_controls_mousewheel(event=None):
-        try:
-            win.unbind_all("<MouseWheel>")
-        except Exception:
-            pass
-    win.bind("<Destroy>", _cleanup_controls_mousewheel)
 
     # Cart data storage
     cart_items = []
@@ -230,18 +116,17 @@ def open_sales_window(current_user: str):
     status_clear_id = None
 
     status_label = tk.Label(
-        controls_frame,
+        left_panel,
         text="",
         bg=Theme.BG_FRAME,
         fg=Theme.TEXT_WARNING,
         font=(Theme.FONT_FAMILY, Theme.FONT_SIZE_SMALL),
         anchor="w",
     )
-    status_label.pack(fill="x", padx=15, pady=(0, 5))
 
     # Order breakdown section
-    total_frame = tk.Frame(controls_frame, bg=Theme.BG_FRAME)
-    total_frame.pack(fill="x", padx=15, pady=15)
+    total_frame = tk.Frame(right_panel, bg=Theme.BG_FRAME)
+    total_frame.pack(fill="both", expand=True, padx=15, pady=15)
 
     breakdown_frame = tk.Frame(total_frame, bg=Theme.BG_FRAME)
     breakdown_frame.pack(fill="x")
@@ -408,10 +293,6 @@ def open_sales_window(current_user: str):
         status_label.config(text=f"Low stock: {brand}", fg=Theme.TEXT_WARNING)
         status_clear_id = win.after(3000, lambda: status_label.config(text="") if win.winfo_exists() else None)
 
-    # Action buttons
-    button_frame = tk.Frame(controls_frame, bg=Theme.BG_FRAME)
-    button_frame.pack(fill="x", padx=15, pady=(0, 10))
-
     def add_to_cart(item_id, brand, size, price, stock, sales_tax=True, discount_ok=True,
                      deposit_enabled=False, deposit_amount=0.0):
         # Check if item already in cart
@@ -526,49 +407,6 @@ def open_sales_window(current_user: str):
             **Theme.button_style(), width=10
         ).pack(side="left", padx=5)
 
-    def fetch_item_flags(item_id):
-        try:
-            conn = get_conn()
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT sales_tax, discount_ok, deposit_sale_enabled, deposit_sale_amount
-                    FROM items WHERE item_id = %s
-                """, (item_id,))
-                row = cur.fetchone()
-            conn.close()
-            if row:
-                sales_tax, discount_ok, deposit_enabled, deposit_amount = row
-                return (
-                    bool(sales_tax) if sales_tax is not None else True,
-                    bool(discount_ok) if discount_ok is not None else True,
-                    bool(deposit_enabled) if deposit_enabled is not None else False,
-                    float(deposit_amount) if deposit_amount is not None else 0.0,
-                )
-        except Exception:
-            pass
-        return True, True, False, 0.0
-
-    def add_selected_to_cart():
-        selected = product_tree.selection()
-        if not selected:
-            messagebox.showwarning("No Selection", "Please select a product to add.")
-            return
-
-        item = product_tree.item(selected[0])
-        item_id = item['values'][0]
-        sales_tax, discount_ok, deposit_enabled, deposit_amount = fetch_item_flags(item_id)
-        add_to_cart(
-            item_id,
-            item['values'][1],
-            item['values'][2],
-            float(item['values'][3]),
-            int(item['values'][4]),
-            sales_tax,
-            discount_ok,
-            deposit_enabled,
-            deposit_amount,
-        )
-
     def remove_from_cart():
         selected = cart_tree.selection()
         if not selected:
@@ -639,7 +477,6 @@ def open_sales_window(current_user: str):
             messagebox.showinfo("Success", summary)
             if win.winfo_exists():
                 clear_cart()
-                load_products()
             return True
 
         except Exception as e:
@@ -802,129 +639,6 @@ def open_sales_window(current_user: str):
     def no_sale():
         messagebox.showinfo("No Sale", "Register opened. No sale recorded.")
 
-    btn_add = tk.Button(
-        button_frame,
-        text="Add to Cart",
-        command=add_selected_to_cart,
-        **Theme.button_style(),
-        width=12
-    )
-    btn_add.grid(row=0, column=0, padx=5, pady=3)
-    bind_hover_effect(btn_add)
-
-    btn_remove = tk.Button(
-        button_frame,
-        text="Remove",
-        command=remove_from_cart,
-        **Theme.button_style(),
-        width=12
-    )
-    btn_remove.grid(row=0, column=1, padx=5, pady=3)
-    bind_hover_effect(btn_remove)
-
-    btn_clear = tk.Button(
-        button_frame,
-        text="Clear Cart",
-        command=clear_cart,
-        **Theme.button_style(),
-        width=12
-    )
-    btn_clear.grid(row=1, column=0, padx=5, pady=3)
-    bind_hover_effect(btn_clear)
-
-    # Back button
-    btn_back = tk.Button(
-        button_frame,
-        text="← Back",
-        command=win.destroy,
-        bg="#DC3545",
-        fg=Theme.TEXT_PRIMARY,
-        font=(Theme.FONT_FAMILY, Theme.FONT_SIZE_NORMAL, "bold"),
-        relief="flat",
-        width=12,
-        activebackground="#C82333",
-        cursor='hand2'
-    )
-    btn_back.grid(row=1, column=1, padx=5, pady=3)
-
-    btn_discount = tk.Button(
-        button_frame,
-        text="Discount",
-        command=open_discount_dialog,
-        **Theme.button_style(),
-        width=12
-    )
-    btn_discount.grid(row=2, column=0, padx=5, pady=3)
-    bind_hover_effect(btn_discount)
-
-    btn_custom_item = tk.Button(
-        button_frame,
-        text="Custom Item",
-        command=add_custom_item,
-        **Theme.button_style(),
-        width=12
-    )
-    btn_custom_item.grid(row=2, column=1, padx=5, pady=3)
-    bind_hover_effect(btn_custom_item)
-
-    btn_no_sale = tk.Button(
-        button_frame,
-        text="No Sale",
-        command=no_sale,
-        **Theme.button_style(),
-        width=12
-    )
-    btn_no_sale.grid(row=3, column=0, columnspan=2, padx=5, pady=3, sticky="ew")
-    bind_hover_effect(btn_no_sale)
-
-    # Checkout button
-    checkout_btn = tk.Button(
-        controls_frame,
-        text="CHECKOUT",
-        command=open_payment_dialog,
-        **Theme.primary_button_style(),
-        height=2
-    )
-    checkout_btn.pack(fill="x", padx=15, pady=(5, 15))
-
-    # Load products function
-    def load_products(search_term=""):
-        for item in product_tree.get_children():
-            product_tree.delete(item)
-
-        try:
-            conn = get_conn()
-            with conn.cursor() as cur:
-                if search_term:
-                    cur.execute("""
-                        SELECT i.item_id, i.brand, i.size, i.price, inv.quantity
-                        FROM items i
-                        LEFT JOIN inventory inv ON i.item_id = inv.item_id
-                        WHERE LOWER(i.brand) LIKE LOWER(%s) OR i.barcode LIKE %s
-                        ORDER BY i.brand
-                    """, (f"%{search_term}%", f"%{search_term}%"))
-                else:
-                    cur.execute("""
-                        SELECT i.item_id, i.brand, i.size, i.price, inv.quantity
-                        FROM items i
-                        LEFT JOIN inventory inv ON i.item_id = inv.item_id
-                        WHERE inv.quantity > 0
-                        ORDER BY i.brand
-                        LIMIT 100
-                    """)
-
-                for row in cur.fetchall():
-                    product_tree.insert("", "end", values=(
-                        row[0],
-                        row[1] or "",
-                        row[2] or "",
-                        f"{row[3]:.2f}" if row[3] else "0.00",
-                        row[4] if row[4] is not None else 0
-                    ))
-            conn.close()
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to load products: {str(e)}")
-
     def on_barcode_scan(event=None):
         barcode = barcode_entry.get().strip()
         if not barcode:
@@ -938,7 +652,7 @@ def open_sales_window(current_user: str):
                            i.deposit_sale_enabled, i.deposit_sale_amount
                     FROM items i
                     LEFT JOIN inventory inv ON i.item_id = inv.item_id
-                    WHERE i.barcode = %s
+                    WHERE REPLACE(i.barcode, ' ', '') = REPLACE(%s, ' ', '')
                 """, (barcode,))
                 row = cur.fetchone()
             conn.close()
@@ -968,16 +682,88 @@ def open_sales_window(current_user: str):
             barcode_entry.delete(0, tk.END)
         barcode_entry.focus_set()
 
-    # Search functionality
-    def on_search(*args):
-        load_products(search_entry.get().strip())
+    # ---- Populate bottom-left: scan field + status + action buttons ----
+    scan_section = tk.Frame(left_panel, bg=Theme.BG_FRAME)
+    scan_section.pack(fill="x", padx=15, pady=15)
 
-    search_entry.bind('<KeyRelease>', on_search)
+    tk.Label(
+        scan_section,
+        text="Scan Item:",
+        bg=Theme.BG_FRAME,
+        fg=Theme.TEXT_PRIMARY,
+        font=(Theme.FONT_FAMILY, 11, 'bold')
+    ).pack(anchor="w", pady=(0, 5))
+
+    barcode_entry = tk.Entry(scan_section, **Theme.entry_style())
+    barcode_entry.pack(fill="x", pady=5, ipady=6)
     barcode_entry.bind('<Return>', on_barcode_scan)
+    barcode_entry.bind('<KP_Enter>', on_barcode_scan)
 
-    # Double-click to add to cart
-    product_tree.bind('<Double-1>', lambda e: add_selected_to_cart())
+    status_label.pack(fill="x", padx=15, pady=(0, 5))
 
-    # Load initial products
-    load_products()
+    button_frame = tk.Frame(left_panel, bg=Theme.BG_FRAME)
+    button_frame.pack(fill="x", padx=15, pady=(0, 15))
+    button_frame.columnconfigure(0, weight=1)
+    button_frame.columnconfigure(1, weight=1)
+
+    btn_remove = tk.Button(
+        button_frame,
+        text="Remove",
+        command=remove_from_cart,
+        **Theme.button_style(),
+        width=12
+    )
+    btn_remove.grid(row=0, column=0, padx=5, pady=3, sticky="ew")
+    bind_hover_effect(btn_remove)
+
+    btn_discount = tk.Button(
+        button_frame,
+        text="Discount",
+        command=open_discount_dialog,
+        **Theme.button_style(),
+        width=12
+    )
+    btn_discount.grid(row=0, column=1, padx=5, pady=3, sticky="ew")
+    bind_hover_effect(btn_discount)
+
+    btn_custom_item = tk.Button(
+        button_frame,
+        text="Custom Item",
+        command=add_custom_item,
+        **Theme.button_style(),
+        width=12
+    )
+    btn_custom_item.grid(row=1, column=0, padx=5, pady=3, sticky="ew")
+    bind_hover_effect(btn_custom_item)
+
+    btn_clear = tk.Button(
+        button_frame,
+        text="Clear Cart",
+        command=clear_cart,
+        **Theme.button_style(),
+        width=12
+    )
+    btn_clear.grid(row=1, column=1, padx=5, pady=3, sticky="ew")
+    bind_hover_effect(btn_clear)
+
+    btn_no_sale = tk.Button(
+        button_frame,
+        text="No Sale",
+        command=no_sale,
+        **Theme.button_style(),
+        width=12
+    )
+    btn_no_sale.grid(row=2, column=0, columnspan=2, padx=5, pady=3, sticky="ew")
+    bind_hover_effect(btn_no_sale)
+
+    # ---- Populate bottom-right: checkout button under the totals ----
+    checkout_btn = tk.Button(
+        right_panel,
+        text="CHECKOUT",
+        command=open_payment_dialog,
+        **Theme.primary_button_style(),
+        height=2
+    )
+    checkout_btn.pack(fill="x", padx=15, pady=(0, 15))
+
     barcode_entry.focus_set()

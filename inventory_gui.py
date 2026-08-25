@@ -28,11 +28,22 @@ def _parse_float_or_none(value):
     return float(value) if value else None
 
 
+_DATE_FORMATS = [
+    "%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%Y/%m/%d", "%m/%d/%y", "%m-%d-%y",
+    "%b %d %Y", "%b %d, %Y", "%B %d %Y", "%B %d, %Y", "%d %b %Y", "%d %B %Y",
+]
+
+
 def _parse_date_or_none(value):
     value = (value or "").strip()
     if not value:
         return None
-    return datetime.strptime(value, "%Y-%m-%d").date()
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(value, fmt).date()
+        except ValueError:
+            continue
+    raise ValueError(f"Unrecognized date: \"{value}\" (try e.g. 2026-08-24 or 08/24/2026)")
 
 
 def _fmt_date(value):
@@ -107,8 +118,8 @@ def _fetch_item(item_id):
                    description, case_qty, vendor_item, item_notes,
                    par_level, reorder_pt, on_order, order_lot, last_order_date, last_receive_date,
                    deposit_sale_enabled, deposit_sale_amount, deposit_return_enabled, deposit_return_amount,
-                   sales_tax, discount_ok, last_cost, case_cost, last_case_cost, case_price,
-                   twofer_price, threefer_price, disc_pool
+                   sales_tax, discount_ok, last_cost, avg_cost, case_cost, last_case_cost, case_price,
+                   disc_pool
             FROM items WHERE item_id = %s
         """, (item_id,))
         row = cur.fetchone()
@@ -122,8 +133,8 @@ def _fetch_item(item_id):
         'description', 'case_qty', 'vendor_item', 'item_notes',
         'par_level', 'reorder_pt', 'on_order', 'order_lot', 'last_order_date', 'last_receive_date',
         'deposit_sale_enabled', 'deposit_sale_amount', 'deposit_return_enabled', 'deposit_return_amount',
-        'sales_tax', 'discount_ok', 'last_cost', 'case_cost', 'last_case_cost', 'case_price',
-        'twofer_price', 'threefer_price', 'disc_pool',
+        'sales_tax', 'discount_ok', 'last_cost', 'avg_cost', 'case_cost', 'last_case_cost', 'case_price',
+        'disc_pool',
     ]
     data = dict(zip(cols, row))
     data['quantity'] = inv_row[0] if inv_row else 0
@@ -255,23 +266,43 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
     _field_row(details_inner, "On Hand", lambda p: tk.Entry(p, textvariable=on_hand_var, **Theme.entry_style()))
 
     _section_label(details_inner, "Vendor & Purchasing")
+    all_vendor_names = [name for _, name in suppliers]
     vendor_combo = _field_row(details_inner, "Vendor", lambda p: ttk.Combobox(
-        p, textvariable=vendor_var, values=[name for _, name in suppliers], state="normal"))
+        p, textvariable=vendor_var, values=all_vendor_names, state="normal"))
 
     def on_vendor_selected(event=None):
-        # Selecting from the dropdown resolves by exact index into `suppliers`,
-        # not by name text — this is unambiguous even when multiple suppliers
-        # share the same (or whitespace-variant) name.
-        idx = vendor_combo.current()
-        if 0 <= idx < len(suppliers):
-            sid, name = suppliers[idx]
-            state['supplier_id'] = sid
-            state['vendor_loaded_name'] = name.strip()
+        # Resolve by matching the selected text against `suppliers` (not by
+        # positional index — the dropdown's values list is filtered live as
+        # you type, so its index no longer lines up with `suppliers`' order).
+        selected_name = vendor_var.get().strip()
+        for sid, name in suppliers:
+            if name.strip() == selected_name:
+                state['supplier_id'] = sid
+                state['vendor_loaded_name'] = name.strip()
+                break
+        vendor_combo['values'] = all_vendor_names
 
     vendor_combo.bind("<<ComboboxSelected>>", on_vendor_selected)
+
+    def on_vendor_keyrelease(event=None):
+        # Live filter: narrows the dropdown to vendors whose name contains
+        # what's typed so far (case-insensitive), so you can see and pick the
+        # correct spelling instead of hand-typing it blind.
+        if event is not None and event.keysym in ("Up", "Down", "Return", "Tab", "Escape"):
+            return
+        typed = vendor_var.get().strip().lower()
+        if not typed:
+            vendor_combo['values'] = all_vendor_names
+            return
+        matches = [name for name in all_vendor_names if typed in name.strip().lower()]
+        vendor_combo['values'] = matches or all_vendor_names
+        if matches:
+            vendor_combo.event_generate('<Down>')
+
+    vendor_combo.bind("<KeyRelease>", on_vendor_keyrelease)
     _field_row(details_inner, "Vendor Item", lambda p: tk.Entry(p, textvariable=vendor_item_var, **Theme.entry_style()))
-    _field_row(details_inner, "Last Order (YYYY-MM-DD)", lambda p: tk.Entry(p, textvariable=last_order_var, **Theme.entry_style()))
-    _field_row(details_inner, "Last Receive (YYYY-MM-DD)", lambda p: tk.Entry(p, textvariable=last_receive_var, **Theme.entry_style()))
+    _field_row(details_inner, "Last Order", lambda p: tk.Entry(p, textvariable=last_order_var, **Theme.entry_style()))
+    _field_row(details_inner, "Last Receive", lambda p: tk.Entry(p, textvariable=last_receive_var, **Theme.entry_style()))
 
     _section_label(details_inner, "Stock & Reorder")
     _field_row(details_inner, "Par Level", lambda p: tk.Entry(p, textvariable=par_level_var, **Theme.entry_style()))
@@ -324,50 +355,143 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
     costs_inner, costs_canvas = _make_scrollable(costs_tab, Theme.BG_FRAME)
     tab_canvases[costs_tab] = costs_canvas
 
-    unit_cost_var = tk.StringVar(value="0.00")
+    latest_cost_var = tk.StringVar(value="0.00")
     case_cost_var = tk.StringVar(value="0.00")
     last_cost_var = tk.StringVar(value="")
     last_case_cost_var = tk.StringVar(value="")
+    avg_cost_var = tk.StringVar(value="")
+    qty_received_var = tk.StringVar(value="0")
     markup_var = tk.StringVar(value="0.00%")
     margin_var = tk.StringVar(value="0.00%")
     price_var = tk.StringVar(value="0.00")
     case_price_var = tk.StringVar(value="0.00")
-    twofer_price_var = tk.StringVar(value="")
-    threefer_price_var = tk.StringVar(value="")
     disc_pool_var = tk.StringVar(value="")
 
     _section_label(costs_inner, "Costs")
-    _field_row(costs_inner, "Unit Cost", lambda p: tk.Entry(p, textvariable=unit_cost_var, **Theme.entry_style()))
+    _field_row(costs_inner, "Latest Cost", lambda p: tk.Entry(p, textvariable=latest_cost_var, **Theme.entry_style()))
     _field_row(costs_inner, "Case Cost", lambda p: tk.Entry(p, textvariable=case_cost_var, **Theme.entry_style()))
-    _field_row(costs_inner, "Last Cost", lambda p: tk.Entry(p, textvariable=last_cost_var, state="readonly", **Theme.entry_style()))
-    _field_row(costs_inner, "Last Case Cost", lambda p: tk.Entry(p, textvariable=last_case_cost_var, state="readonly", **Theme.entry_style()))
-    _field_row(costs_inner, "Markup %", lambda p: tk.Entry(p, textvariable=markup_var, state="readonly", **Theme.entry_style()))
-    _field_row(costs_inner, "Margin %", lambda p: tk.Entry(p, textvariable=margin_var, state="readonly", **Theme.entry_style()))
+    _field_row(costs_inner, "Last Cost", lambda p: tk.Entry(p, textvariable=last_cost_var, state="readonly", readonlybackground=Theme.BG_INPUT, **Theme.entry_style()))
+    _field_row(costs_inner, "Last Case Cost", lambda p: tk.Entry(p, textvariable=last_case_cost_var, state="readonly", readonlybackground=Theme.BG_INPUT, **Theme.entry_style()))
+    _field_row(costs_inner, "Avg Cost", lambda p: tk.Entry(p, textvariable=avg_cost_var, state="readonly", readonlybackground=Theme.BG_INPUT, **Theme.entry_style()))
+    _field_row(costs_inner, "Qty Received", lambda p: tk.Entry(p, textvariable=qty_received_var, **Theme.entry_style()))
+    _field_row(costs_inner, "Markup %", lambda p: tk.Entry(p, textvariable=markup_var, **Theme.entry_style()))
+    _field_row(costs_inner, "Margin %", lambda p: tk.Entry(p, textvariable=margin_var, **Theme.entry_style()))
+
+    tk.Label(
+        costs_inner,
+        text="Qty Received: how many units you're adding to On Hand right now at the Latest Cost above. "
+             "Leave at 0 if you're not receiving stock this edit (e.g. just correcting On Hand). "
+             "Avg Cost recalculates from this using the weighted-average method.",
+        bg=Theme.BG_FRAME, fg=Theme.TEXT_SECONDARY, font=(Theme.FONT_FAMILY, 9),
+        wraplength=500, justify="left", anchor="w"
+    ).pack(fill="x", padx=15, pady=(0, 10))
+
+    price_warning_label = tk.Label(
+        costs_inner, text="", bg=Theme.BG_FRAME, fg=Theme.TEXT_WARNING,
+        font=(Theme.FONT_FAMILY, Theme.FONT_SIZE_SMALL, "bold"),
+        wraplength=500, justify="left", anchor="w"
+    )
+    price_warning_label.pack(fill="x", padx=15, pady=(0, 5))
 
     _section_label(costs_inner, "Prices")
     _field_row(costs_inner, "Standard Price", lambda p: tk.Entry(p, textvariable=price_var, **Theme.entry_style()))
     _field_row(costs_inner, "Case Price", lambda p: tk.Entry(p, textvariable=case_price_var, **Theme.entry_style()))
-    _field_row(costs_inner, "TwoFer Price", lambda p: tk.Entry(p, textvariable=twofer_price_var, **Theme.entry_style()))
-    _field_row(costs_inner, "ThreeFer Price", lambda p: tk.Entry(p, textvariable=threefer_price_var, **Theme.entry_style()))
     _field_row(costs_inner, "Discount Pool", lambda p: tk.Entry(p, textvariable=disc_pool_var, **Theme.entry_style()))
 
-    def refresh_markup_margin(*_):
-        try:
-            cost = float(unit_cost_var.get() or 0)
-            price = float(price_var.get() or 0)
-        except ValueError:
-            return
-        if cost > 0:
-            markup_var.set(f"{((price - cost) / cost * 100):.2f}%")
-        else:
-            markup_var.set("--")
-        if price > 0:
-            margin_var.set(f"{((price - cost) / price * 100):.2f}%")
-        else:
-            margin_var.set("--")
+    # Price, Markup %, and Margin % are three mutually-derivable views of the
+    # same relationship (given Cost). Editing any one recalculates the other
+    # two. pricing_lock prevents the resulting var.set() calls from re-firing
+    # each other's trace handlers (which would otherwise infinite-loop).
+    pricing_lock = {'active': False}
 
-    unit_cost_var.trace_add("write", refresh_markup_margin)
-    price_var.trace_add("write", refresh_markup_margin)
+    def _current_cost():
+        try:
+            latest_cost = float(latest_cost_var.get() or 0)
+        except ValueError:
+            latest_cost = 0.0
+        try:
+            avg_cost = float(avg_cost_var.get() or 0)
+        except ValueError:
+            avg_cost = 0.0
+        # Falls back to Latest Cost for items that haven't gone through a
+        # weighted-average recalculation yet (avg_cost never set).
+        if avg_cost > 0:
+            return avg_cost, "avg cost"
+        return latest_cost, "cost"
+
+    def _refresh_warning(cost, cost_label, price):
+        if not price_var.get().strip() or price <= 0:
+            price_warning_label.config(text="⚠ Price is blank — set a selling price before saving.")
+        elif cost > 0 and price < cost:
+            price_warning_label.config(
+                text=f"⚠ Price (${price:.2f}) is below {cost_label} (${cost:.2f}) — this item would sell at a loss."
+            )
+        else:
+            price_warning_label.config(text="")
+
+    def _parse_pct(var):
+        text = var.get().strip().rstrip('%').strip()
+        return float(text) if text else None
+
+    def on_price_changed(*_):
+        if pricing_lock['active']:
+            return
+        pricing_lock['active'] = True
+        try:
+            cost, cost_label = _current_cost()
+            try:
+                price = float(price_var.get() or 0)
+            except ValueError:
+                price = 0.0
+            markup_var.set(f"{((price - cost) / cost * 100):.2f}%" if cost > 0 else "--")
+            margin_var.set(f"{((price - cost) / price * 100):.2f}%" if price > 0 else "--")
+            _refresh_warning(cost, cost_label, price)
+        finally:
+            pricing_lock['active'] = False
+
+    def on_markup_changed(*_):
+        if pricing_lock['active']:
+            return
+        pricing_lock['active'] = True
+        try:
+            cost, cost_label = _current_cost()
+            try:
+                markup_pct = _parse_pct(markup_var)
+            except ValueError:
+                return
+            if markup_pct is None or cost <= 0:
+                return
+            new_price = cost * (1 + markup_pct / 100)
+            price_var.set(f"{new_price:.2f}")
+            margin_var.set(f"{((new_price - cost) / new_price * 100):.2f}%" if new_price > 0 else "--")
+            _refresh_warning(cost, cost_label, new_price)
+        finally:
+            pricing_lock['active'] = False
+
+    def on_margin_changed(*_):
+        if pricing_lock['active']:
+            return
+        pricing_lock['active'] = True
+        try:
+            cost, cost_label = _current_cost()
+            try:
+                margin_pct = _parse_pct(margin_var)
+            except ValueError:
+                return
+            if margin_pct is None or cost <= 0 or margin_pct >= 100:
+                return
+            new_price = cost / (1 - margin_pct / 100)
+            price_var.set(f"{new_price:.2f}")
+            markup_var.set(f"{((new_price - cost) / cost * 100):.2f}%" if cost > 0 else "--")
+            _refresh_warning(cost, cost_label, new_price)
+        finally:
+            pricing_lock['active'] = False
+
+    latest_cost_var.trace_add("write", on_price_changed)
+    avg_cost_var.trace_add("write", on_price_changed)
+    price_var.trace_add("write", on_price_changed)
+    markup_var.trace_add("write", on_markup_changed)
+    margin_var.trace_add("write", on_margin_changed)
 
     # ================= Load / populate =================
     def populate_fields(data):
@@ -411,16 +535,16 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
         last_sale_text = _fmt_date(stats['last_sale']) if stats['last_sale'] else "Never"
         stats_label.config(text=f"Last Sale: {last_sale_text}    MTD Sold: {stats['mtd']}    YTD Sold: {stats['ytd']}")
 
-        unit_cost_var.set(f"{data.get('cost') or 0:.2f}" if data else "0.00")
+        latest_cost_var.set(f"{data.get('cost') or 0:.2f}" if data else "0.00")
         case_cost_var.set(f"{data.get('case_cost') or 0:.2f}" if data else "0.00")
         last_cost_var.set(f"{data['last_cost']:.2f}" if data and data.get('last_cost') is not None else "")
         last_case_cost_var.set(f"{data['last_case_cost']:.2f}" if data and data.get('last_case_cost') is not None else "")
+        avg_cost_var.set(f"{data['avg_cost']:.2f}" if data and data.get('avg_cost') is not None else "")
+        qty_received_var.set("0")
         price_var.set(f"{data.get('price') or 0:.2f}" if data else "0.00")
         case_price_var.set(f"{data.get('case_price') or 0:.2f}" if data else "0.00")
-        twofer_price_var.set(f"{data['twofer_price']:.2f}" if data and data.get('twofer_price') is not None else "")
-        threefer_price_var.set(f"{data['threefer_price']:.2f}" if data and data.get('threefer_price') is not None else "")
         disc_pool_var.set((data.get('disc_pool') if data else "") or "")
-        refresh_markup_margin()
+        on_price_changed()
 
         update_nav_state()
 
@@ -513,14 +637,13 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
             deposit_return_amount = _parse_float_or_zero(deposit_return_amount_var.get())
             sales_tax = sales_tax_var.get()
             discount_ok = discount_ok_var.get()
-            cost = _parse_float_or_zero(unit_cost_var.get())
+            cost = _parse_float_or_zero(latest_cost_var.get())
             case_cost = _parse_float_or_zero(case_cost_var.get())
             price = _parse_float_or_zero(price_var.get())
             case_price = _parse_float_or_zero(case_price_var.get())
-            twofer_price = _parse_float_or_none(twofer_price_var.get())
-            threefer_price = _parse_float_or_none(threefer_price_var.get())
             disc_pool = disc_pool_var.get().strip() or None
             on_hand = _parse_int_or_zero(on_hand_var.get())
+            qty_received = _parse_int_or_zero(qty_received_var.get())
         except ValueError as e:
             messagebox.showerror("Invalid Value", f"Please check numeric/date fields: {e}", parent=dialog)
             return
@@ -530,26 +653,29 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
             conn = get_conn()
             with conn.cursor() as cur:
                 if state['item_id'] is None:
+                    # First-ever cost basis for a brand-new item is just what
+                    # was typed as Latest Cost (no prior purchases to average with).
+                    new_avg_cost = cost if cost > 0 else None
                     cur.execute("""
                         INSERT INTO items (
                             barcode, supplier_id, brand, size, price, cost, type,
                             description, case_qty, vendor_item, item_notes,
                             par_level, reorder_pt, on_order, order_lot, last_order_date, last_receive_date,
                             deposit_sale_enabled, deposit_sale_amount, deposit_return_enabled, deposit_return_amount,
-                            sales_tax, discount_ok, case_cost, case_price, twofer_price, threefer_price, disc_pool
+                            sales_tax, discount_ok, avg_cost, case_cost, case_price, disc_pool
                         ) VALUES (
                             %s, %s, %s, %s, %s, %s, %s,
                             %s, %s, %s, %s,
                             %s, %s, %s, %s, %s, %s,
                             %s, %s, %s, %s,
-                            %s, %s, %s, %s, %s, %s, %s
+                            %s, %s, %s, %s, %s, %s
                         ) RETURNING item_id
                     """, (
                         barcode, supplier_id, brand, size, price, cost, item_type,
                         description, case_qty, vendor_item, item_notes,
                         par_level, reorder_pt, on_order, order_lot, last_order_date, last_receive_date,
                         deposit_sale_enabled, deposit_sale_amount, deposit_return_enabled, deposit_return_amount,
-                        sales_tax, discount_ok, case_cost, case_price, twofer_price, threefer_price, disc_pool,
+                        sales_tax, discount_ok, new_avg_cost, case_cost, case_price, disc_pool,
                     ))
                     new_id = cur.fetchone()[0]
                     cur.execute(
@@ -559,8 +685,25 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
                     state['item_id'] = new_id
                     state['mode'] = 'edit'
                 else:
-                    cur.execute("SELECT cost, case_cost FROM items WHERE item_id = %s", (state['item_id'],))
-                    prev_cost, prev_case_cost = cur.fetchone()
+                    cur.execute("SELECT cost, case_cost, avg_cost FROM items WHERE item_id = %s", (state['item_id'],))
+                    prev_cost, prev_case_cost, prev_avg_cost = cur.fetchone()
+                    cur.execute("SELECT quantity FROM inventory WHERE item_id = %s", (state['item_id'],))
+                    inv_row = cur.fetchone()
+                    prev_on_hand = inv_row[0] if inv_row else 0
+
+                    # Weighted-average cost recalculation: only moves when you
+                    # actually record a receipt (Qty Received > 0) — plain On
+                    # Hand corrections (recounts) leave Avg Cost untouched.
+                    if qty_received > 0:
+                        if prev_on_hand > 0 and prev_avg_cost and prev_avg_cost > 0:
+                            new_avg_cost = (
+                                (float(prev_avg_cost) * prev_on_hand) + (cost * qty_received)
+                            ) / (prev_on_hand + qty_received)
+                        else:
+                            new_avg_cost = cost
+                    else:
+                        new_avg_cost = float(prev_avg_cost) if prev_avg_cost is not None else None
+
                     cur.execute("""
                         UPDATE items SET
                             barcode = %s, supplier_id = %s, brand = %s, size = %s, price = %s, cost = %s, type = %s,
@@ -570,8 +713,8 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
                             deposit_sale_enabled = %s, deposit_sale_amount = %s,
                             deposit_return_enabled = %s, deposit_return_amount = %s,
                             sales_tax = %s, discount_ok = %s,
-                            last_cost = %s, case_cost = %s, last_case_cost = %s,
-                            case_price = %s, twofer_price = %s, threefer_price = %s, disc_pool = %s
+                            last_cost = %s, avg_cost = %s, case_cost = %s, last_case_cost = %s,
+                            case_price = %s, disc_pool = %s
                         WHERE item_id = %s
                     """, (
                         barcode, supplier_id, brand, size, price, cost, item_type,
@@ -581,8 +724,8 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
                         deposit_sale_enabled, deposit_sale_amount,
                         deposit_return_enabled, deposit_return_amount,
                         sales_tax, discount_ok,
-                        prev_cost, case_cost, prev_case_cost,
-                        case_price, twofer_price, threefer_price, disc_pool,
+                        prev_cost, new_avg_cost, case_cost, prev_case_cost,
+                        case_price, disc_pool,
                         state['item_id'],
                     ))
                     cur.execute("SELECT inv_id FROM inventory WHERE item_id = %s", (state['item_id'],))
@@ -698,11 +841,18 @@ def open_inventory_window():
         font=(Theme.FONT_FAMILY, 11, 'bold')
     ).pack(side="left", padx=(0, 10))
 
+    search_field_var = tk.StringVar(value="All Fields")
+    search_field_combo = ttk.Combobox(
+        search_inner, textvariable=search_field_var, state="readonly", width=12,
+        values=["All Fields", "Barcode", "Brand", "Description", "Size", "Vendor", "Type"]
+    )
+    search_field_combo.pack(side="left", padx=(0, 10))
+
     search_entry = tk.Entry(search_inner, **Theme.entry_style(), width=30)
     search_entry.pack(side="left", padx=5, ipady=6)
 
     def search_items():
-        load_inventory(search_entry.get().strip())
+        load_inventory(search_entry.get().strip(), search_field_var.get())
 
     search_btn = tk.Button(
         search_inner,
@@ -768,8 +918,22 @@ def open_inventory_window():
 
     loaded_item_ids = []
 
+    # Maps the Search field dropdown to the SQL column it searches. Barcode
+    # is left un-lowered (it's numeric/alphanumeric, not free text); all
+    # others are case- and whitespace-insensitive, same as before — strips
+    # all spaces (not just trims ends) from both sides before comparing,
+    # since the legacy data has inconsistent spacing (e.g. "1800  TEQUILA").
+    SEARCH_FIELD_COLUMNS = {
+        "Barcode": "REPLACE(i.barcode, ' ', '') LIKE REPLACE(%s, ' ', '')",
+        "Brand": "REPLACE(LOWER(i.brand), ' ', '') LIKE REPLACE(LOWER(%s), ' ', '')",
+        "Description": "REPLACE(LOWER(i.description), ' ', '') LIKE REPLACE(LOWER(%s), ' ', '')",
+        "Size": "REPLACE(LOWER(i.size), ' ', '') LIKE REPLACE(LOWER(%s), ' ', '')",
+        "Vendor": "REPLACE(LOWER(s.company_name), ' ', '') LIKE REPLACE(LOWER(%s), ' ', '')",
+        "Type": "REPLACE(LOWER(i.type), ' ', '') LIKE REPLACE(LOWER(%s), ' ', '')",
+    }
+
     # Load inventory data
-    def load_inventory(search_term=""):
+    def load_inventory(search_term="", search_field="All Fields"):
         for item in tree.get_children():
             tree.delete(item)
         loaded_item_ids.clear()
@@ -785,15 +949,13 @@ def open_inventory_window():
                     LEFT JOIN suppliers s ON i.supplier_id = s.supplier_id
                 """
                 if search_term:
-                    query = base_query + """
-                        WHERE
-                            LOWER(i.brand) LIKE LOWER(%s) OR
-                            i.barcode LIKE %s OR
-                            LOWER(i.type) LIKE LOWER(%s)
-                        ORDER BY i.item_id
-                    """
+                    if search_field in SEARCH_FIELD_COLUMNS:
+                        conditions = [SEARCH_FIELD_COLUMNS[search_field]]
+                    else:
+                        conditions = list(SEARCH_FIELD_COLUMNS.values())
+                    query = base_query + " WHERE " + " OR ".join(conditions) + " ORDER BY i.item_id"
                     search_pattern = f"%{search_term}%"
-                    cur.execute(query, (search_pattern, search_pattern, search_pattern))
+                    cur.execute(query, tuple([search_pattern] * len(conditions)))
                 else:
                     cur.execute(base_query + " ORDER BY i.item_id")
 
@@ -821,7 +983,7 @@ def open_inventory_window():
         _open_item_detail_dialog(
             win, mode, item_id=item_id, prefill_barcode=prefill_barcode,
             item_list=list(loaded_item_ids),
-            on_saved=lambda: load_inventory(search_entry.get().strip())
+            on_saved=lambda: load_inventory(search_entry.get().strip(), search_field_var.get())
         )
 
     def on_row_double_click(event=None):
@@ -881,7 +1043,7 @@ def open_inventory_window():
                 conn.commit()
             conn.close()
             messagebox.showinfo("Deleted", "Item deleted.")
-            load_inventory(search_entry.get().strip())
+            load_inventory(search_entry.get().strip(), search_field_var.get())
         except Exception as e:
             if conn is not None:
                 try:
