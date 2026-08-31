@@ -79,7 +79,7 @@ def open_dashboard(current_user: str, role: str, root=None):
     def open_reports():
         try:
             from reports_gui import open_reports_window
-            open_reports_window()
+            open_reports_window(current_user)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to open Reports: {str(e)}")
 

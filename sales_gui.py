@@ -5,6 +5,7 @@ from tkinter import ttk, messagebox
 from datetime import datetime
 from db import get_conn
 from theme import Theme, bind_hover_effect
+from receipt import print_receipt
 
 def open_sales_window(current_user: str):
     win = tk.Toplevel()
@@ -294,7 +295,7 @@ def open_sales_window(current_user: str):
         status_clear_id = win.after(3000, lambda: status_label.config(text="") if win.winfo_exists() else None)
 
     def add_to_cart(item_id, brand, size, price, stock, sales_tax=True, discount_ok=True,
-                     deposit_enabled=False, deposit_amount=0.0):
+                     deposit_enabled=False, deposit_amount=0.0, barcode=None):
         # Check if item already in cart
         for cart_item in cart_items:
             if cart_item['item_id'] == item_id:
@@ -326,6 +327,7 @@ def open_sales_window(current_user: str):
             'discount_ok': discount_ok,
             'deposit_enabled': deposit_enabled,
             'deposit_amount': deposit_amount,
+            'barcode': barcode,
         })
 
         cart_tree.insert("", "end", values=(
@@ -386,6 +388,7 @@ def open_sales_window(current_user: str):
                 'discount_ok': True,
                 'deposit_enabled': False,
                 'deposit_amount': 0.0,
+                'barcode': None,
             })
             cart_tree.insert("", "end", values=(
                 f"{name} (Custom)",
@@ -471,10 +474,18 @@ def open_sales_window(current_user: str):
                 conn.commit()
             conn.close()
 
+            # Printing happens after the sale is already committed — a print/
+            # drawer failure here must not look like the sale itself failed.
+            try:
+                print_receipt(sale_id, current_user, cart_items, totals, payment_method, cash_tendered, change_due)
+                print_note = ""
+            except Exception as print_err:
+                print_note = f"\n\n(Receipt did not print: {print_err})"
+
             summary = f"Sale completed! Total: ${totals['total']:.2f}\nSale ID: {sale_id}"
             if payment_method == 'cash' and change_due is not None:
                 summary += f"\nChange Due: ${change_due:.2f}"
-            messagebox.showinfo("Success", summary)
+            messagebox.showinfo("Success", summary + print_note)
             if win.winfo_exists():
                 clear_cart()
             return True
@@ -649,7 +660,7 @@ def open_sales_window(current_user: str):
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT i.item_id, i.brand, i.size, i.price, inv.quantity, i.sales_tax, i.discount_ok,
-                           i.deposit_sale_enabled, i.deposit_sale_amount
+                           i.deposit_sale_enabled, i.deposit_sale_amount, i.barcode
                     FROM items i
                     LEFT JOIN inventory inv ON i.item_id = inv.item_id
                     WHERE REPLACE(i.barcode, ' ', '') = REPLACE(%s, ' ', '')
@@ -666,7 +677,7 @@ def open_sales_window(current_user: str):
             barcode_entry.focus_set()
             return
 
-        item_id, brand, size, price, quantity, sales_tax, discount_ok, deposit_enabled, deposit_amount = row
+        item_id, brand, size, price, quantity, sales_tax, discount_ok, deposit_enabled, deposit_amount, item_barcode = row
         added = add_to_cart(
             item_id,
             brand or "",
@@ -677,6 +688,7 @@ def open_sales_window(current_user: str):
             bool(discount_ok) if discount_ok is not None else True,
             bool(deposit_enabled) if deposit_enabled is not None else False,
             float(deposit_amount) if deposit_amount is not None else 0.0,
+            item_barcode,
         )
         if added:
             barcode_entry.delete(0, tk.END)

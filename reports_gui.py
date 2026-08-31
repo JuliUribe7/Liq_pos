@@ -4,8 +4,9 @@ from tkinter import ttk, messagebox
 from datetime import datetime, timedelta
 from db import get_conn
 from theme import Theme, bind_hover_effect
+from receipt import print_receipt
 
-def open_reports_window():
+def open_reports_window(current_user):
     win = tk.Toplevel()
     win.title("Reports & Analytics")
     win.geometry("1200x700")
@@ -114,11 +115,12 @@ def open_reports_window():
                         s.cashier,
                         s.total_amount,
                         COUNT(si.sale_item_id) as items_count,
-                        s.status
+                        s.status,
+                        s.is_refund
                     FROM sales s
                     LEFT JOIN sale_items si ON s.sale_id = si.sale_id
                     WHERE {date_filter}
-                    GROUP BY s.sale_id, s.sale_date, s.cashier, s.total_amount, s.status
+                    GROUP BY s.sale_id, s.sale_date, s.cashier, s.total_amount, s.status, s.is_refund
                     ORDER BY s.sale_date DESC
                 """
 
@@ -129,22 +131,27 @@ def open_reports_window():
                 total_transactions = 0
 
                 for row in rows:
-                    sale_id, sale_date, cashier, total, items, status = row
+                    sale_id, sale_date, cashier, total, items, status, is_refund = row
+                    total = float(total) if total else 0.0
+                    total_str = f"-${abs(total):.2f}" if total < 0 else f"${total:.2f}"
                     sales_tree.insert("", "end", values=(
                         sale_id,
                         sale_date.strftime("%Y-%m-%d %H:%M") if sale_date else "",
                         cashier or "",
-                        f"${total:.2f}" if total else "$0.00",
+                        total_str,
                         items or 0,
-                        status or "complete"
+                        status or "complete",
+                        "Yes" if is_refund else "No"
                     ))
-                    total_sales += total if total else 0
+                    total_sales += total
                     total_transactions += 1
 
-                summary_text = f"Transactions: {total_transactions} | Total Sales: ${total_sales:.2f}"
+                total_sales_str = f"-${abs(total_sales):.2f}" if total_sales < 0 else f"${total_sales:.2f}"
+                summary_text = f"Transactions: {total_transactions} | Total Sales: {total_sales_str}"
                 if total_transactions > 0:
                     avg_sale = total_sales / total_transactions
-                    summary_text += f" | Average: ${avg_sale:.2f}"
+                    avg_str = f"-${abs(avg_sale):.2f}" if avg_sale < 0 else f"${avg_sale:.2f}"
+                    summary_text += f" | Average: {avg_str}"
                 summary_label.config(text=summary_text)
 
             conn.close()
@@ -171,7 +178,7 @@ def open_reports_window():
     sales_scroll = ttk.Scrollbar(tree_frame)
     sales_scroll.pack(side="right", fill="y")
 
-    sales_columns = ("Sale ID", "Date", "Cashier", "Total", "Items", "Status")
+    sales_columns = ("Sale ID", "Date", "Cashier", "Total", "Items", "Status", "Is Refund")
     sales_tree = ttk.Treeview(
         tree_frame,
         columns=sales_columns,
@@ -186,6 +193,7 @@ def open_reports_window():
     sales_tree.heading("Total", text="Total")
     sales_tree.heading("Items", text="Items Count")
     sales_tree.heading("Status", text="Status")
+    sales_tree.heading("Is Refund", text="Is Refund")
 
     sales_tree.column("Sale ID", width=80)
     sales_tree.column("Date", width=150)
@@ -193,6 +201,7 @@ def open_reports_window():
     sales_tree.column("Total", width=120)
     sales_tree.column("Items", width=120)
     sales_tree.column("Status", width=100)
+    sales_tree.column("Is Refund", width=90)
 
     sales_tree.pack(side="left", fill="both", expand=True)
 
@@ -241,6 +250,165 @@ def open_reports_window():
     )
     void_btn.pack(pady=(0, 10))
     bind_hover_effect(void_btn)
+
+    def refund_selected_sale():
+        selected = sales_tree.selection()
+        if not selected:
+            messagebox.showwarning("No Selection", "Please select a sale to refund.")
+            return
+
+        sale_id = sales_tree.item(selected[0])['values'][0]
+
+        conn = None
+        try:
+            conn = get_conn()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT subtotal, discount_amount, tax_amount, deposit_amount, total_amount,
+                           payment_method, status, is_refund
+                    FROM sales WHERE sale_id = %s
+                """, (sale_id,))
+                orig = cur.fetchone()
+                if orig is None:
+                    messagebox.showerror("Error", "Sale not found.")
+                    return
+                (orig_subtotal, orig_discount, orig_tax, orig_deposit, orig_total,
+                 orig_payment_method, orig_status, orig_is_refund) = orig
+
+                if orig_status == 'incomplete':
+                    messagebox.showwarning(
+                        "Cannot Refund", "This sale is voided/incomplete and cannot be refunded."
+                    )
+                    return
+                if orig_is_refund:
+                    messagebox.showwarning(
+                        "Cannot Refund", "This is already a refund record and cannot itself be refunded."
+                    )
+                    return
+
+                cur.execute(
+                    "SELECT COUNT(*) FROM sales WHERE original_sale_id = %s AND is_refund = TRUE",
+                    (sale_id,)
+                )
+                if cur.fetchone()[0] > 0:
+                    messagebox.showwarning("Already Refunded", "This sale has already been refunded.")
+                    return
+
+                cur.execute("""
+                    SELECT si.item_id, si.quantity, si.price, si.item_name, si.is_custom, i.brand, i.barcode
+                    FROM sale_items si
+                    LEFT JOIN items i ON si.item_id = i.item_id
+                    WHERE si.sale_id = %s
+                """, (sale_id,))
+                orig_items = cur.fetchall()
+            conn.close()
+        except Exception as e:
+            if conn is not None:
+                conn.close()
+            messagebox.showerror("Error", f"Failed to load sale for refund: {str(e)}")
+            return
+
+        if not messagebox.askyesno(
+            "Refund Sale",
+            f"Refund Sale ID {sale_id} for ${float(orig_total):.2f} ({orig_payment_method})?\n\n"
+            "This will restock inventory for all items and cannot be undone."
+        ):
+            return
+
+        conn = None
+        try:
+            conn = get_conn()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO sales (subtotal, discount_amount, tax_amount, deposit_amount, total_amount,
+                                        cashier, payment_method, is_refund, original_sale_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE, %s)
+                    RETURNING sale_id
+                """, (
+                    -float(orig_subtotal), -float(orig_discount), -float(orig_tax), -float(orig_deposit),
+                    -float(orig_total), current_user, orig_payment_method, sale_id,
+                ))
+                refund_sale_id = cur.fetchone()[0]
+
+                refund_cart_items = []
+                for item_id, qty, price, item_name, is_custom, brand, barcode in orig_items:
+                    qty = int(qty)
+                    price = float(price)
+                    subtotal = -(qty * price)
+                    name = item_name if is_custom else (brand or "")
+
+                    cur.execute("""
+                        INSERT INTO sale_items (sale_id, item_id, quantity, price, subtotal, item_name, is_custom)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """, (refund_sale_id, item_id, -qty, price, subtotal, item_name, is_custom))
+
+                    if not is_custom and item_id is not None:
+                        cur.execute(
+                            "UPDATE inventory SET quantity = quantity + %s WHERE item_id = %s",
+                            (qty, item_id)
+                        )
+
+                    refund_cart_items.append({
+                        'brand': name,
+                        'quantity': -qty,
+                        'price': price,
+                        'is_custom': is_custom,
+                        'barcode': barcode,
+                    })
+
+                conn.commit()
+            conn.close()
+        except Exception as e:
+            if conn is not None:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                conn.close()
+            messagebox.showerror("Error", f"Failed to process refund: {str(e)}")
+            return
+
+        refund_totals = {
+            'total_items': sum(item['quantity'] for item in refund_cart_items),
+            'subtotal': -float(orig_subtotal),
+            'discount_amount': -float(orig_discount),
+            'tax_amount': -float(orig_tax),
+            'deposit_amount': -float(orig_deposit),
+            'total': -float(orig_total),
+        }
+
+        # For cash refunds, "tendered" is the cash handed back to the customer
+        # and there's no change — matches the reference refund receipt exactly
+        # ("Paid by Cash: -47.82", "Change Due: 0.00").
+        if orig_payment_method == 'cash':
+            receipt_tendered, receipt_change = refund_totals['total'], 0.0
+        else:
+            receipt_tendered, receipt_change = None, None
+
+        try:
+            print_receipt(
+                refund_sale_id, current_user, refund_cart_items, refund_totals,
+                orig_payment_method, receipt_tendered, receipt_change
+            )
+            print_note = ""
+        except Exception as print_err:
+            print_note = f"\n\n(Receipt did not print: {print_err})"
+
+        messagebox.showinfo(
+            "Refund Complete",
+            f"Refund processed. New Sale ID: {refund_sale_id}{print_note}"
+        )
+        load_sales_report()
+
+    refund_btn = tk.Button(
+        sales_tab,
+        text="Refund Selected Sale",
+        command=refund_selected_sale,
+        **Theme.button_style(),
+        width=18
+    )
+    refund_btn.pack(pady=(0, 10))
+    bind_hover_effect(refund_btn)
 
     # Summary label
     summary_label = tk.Label(
