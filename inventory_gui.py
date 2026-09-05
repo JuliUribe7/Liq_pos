@@ -118,7 +118,7 @@ def _fetch_item(item_id):
                    description, case_qty, vendor_item, item_notes,
                    par_level, reorder_pt, on_order, order_lot, last_order_date, last_receive_date,
                    deposit_sale_enabled, deposit_sale_amount, deposit_return_enabled, deposit_return_amount,
-                   sales_tax, discount_ok, last_cost, avg_cost, case_cost, last_case_cost, case_price,
+                   sales_tax, discount_ok, avg_cost, case_cost, case_price,
                    disc_pool
             FROM items WHERE item_id = %s
         """, (item_id,))
@@ -133,7 +133,7 @@ def _fetch_item(item_id):
         'description', 'case_qty', 'vendor_item', 'item_notes',
         'par_level', 'reorder_pt', 'on_order', 'order_lot', 'last_order_date', 'last_receive_date',
         'deposit_sale_enabled', 'deposit_sale_amount', 'deposit_return_enabled', 'deposit_return_amount',
-        'sales_tax', 'discount_ok', 'last_cost', 'avg_cost', 'case_cost', 'last_case_cost', 'case_price',
+        'sales_tax', 'discount_ok', 'avg_cost', 'case_cost', 'case_price',
         'disc_pool',
     ]
     data = dict(zip(cols, row))
@@ -357,8 +357,6 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
 
     latest_cost_var = tk.StringVar(value="0.00")
     case_cost_var = tk.StringVar(value="0.00")
-    last_cost_var = tk.StringVar(value="")
-    last_case_cost_var = tk.StringVar(value="")
     avg_cost_var = tk.StringVar(value="")
     qty_received_var = tk.StringVar(value="0")
     markup_var = tk.StringVar(value="0.00%")
@@ -370,8 +368,6 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
     _section_label(costs_inner, "Costs")
     _field_row(costs_inner, "Latest Cost", lambda p: tk.Entry(p, textvariable=latest_cost_var, **Theme.entry_style()))
     _field_row(costs_inner, "Case Cost", lambda p: tk.Entry(p, textvariable=case_cost_var, **Theme.entry_style()))
-    _field_row(costs_inner, "Last Cost", lambda p: tk.Entry(p, textvariable=last_cost_var, state="readonly", readonlybackground=Theme.BG_INPUT, **Theme.entry_style()))
-    _field_row(costs_inner, "Last Case Cost", lambda p: tk.Entry(p, textvariable=last_case_cost_var, state="readonly", readonlybackground=Theme.BG_INPUT, **Theme.entry_style()))
     _field_row(costs_inner, "Avg Cost", lambda p: tk.Entry(p, textvariable=avg_cost_var, state="readonly", readonlybackground=Theme.BG_INPUT, **Theme.entry_style()))
     _field_row(costs_inner, "Qty Received", lambda p: tk.Entry(p, textvariable=qty_received_var, **Theme.entry_style()))
     _field_row(costs_inner, "Markup %", lambda p: tk.Entry(p, textvariable=markup_var, **Theme.entry_style()))
@@ -537,8 +533,6 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
 
         latest_cost_var.set(f"{data.get('cost') or 0:.2f}" if data else "0.00")
         case_cost_var.set(f"{data.get('case_cost') or 0:.2f}" if data else "0.00")
-        last_cost_var.set(f"{data['last_cost']:.2f}" if data and data.get('last_cost') is not None else "")
-        last_case_cost_var.set(f"{data['last_case_cost']:.2f}" if data and data.get('last_case_cost') is not None else "")
         avg_cost_var.set(f"{data['avg_cost']:.2f}" if data and data.get('avg_cost') is not None else "")
         qty_received_var.set("0")
         price_var.set(f"{data.get('price') or 0:.2f}" if data else "0.00")
@@ -685,8 +679,8 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
                     state['item_id'] = new_id
                     state['mode'] = 'edit'
                 else:
-                    cur.execute("SELECT cost, case_cost, avg_cost FROM items WHERE item_id = %s", (state['item_id'],))
-                    prev_cost, prev_case_cost, prev_avg_cost = cur.fetchone()
+                    cur.execute("SELECT avg_cost FROM items WHERE item_id = %s", (state['item_id'],))
+                    (prev_avg_cost,) = cur.fetchone()
                     cur.execute("SELECT quantity FROM inventory WHERE item_id = %s", (state['item_id'],))
                     inv_row = cur.fetchone()
                     prev_on_hand = inv_row[0] if inv_row else 0
@@ -713,7 +707,7 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
                             deposit_sale_enabled = %s, deposit_sale_amount = %s,
                             deposit_return_enabled = %s, deposit_return_amount = %s,
                             sales_tax = %s, discount_ok = %s,
-                            last_cost = %s, avg_cost = %s, case_cost = %s, last_case_cost = %s,
+                            avg_cost = %s, case_cost = %s,
                             case_price = %s, disc_pool = %s
                         WHERE item_id = %s
                     """, (
@@ -724,7 +718,7 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
                         deposit_sale_enabled, deposit_sale_amount,
                         deposit_return_enabled, deposit_return_amount,
                         sales_tax, discount_ok,
-                        prev_cost, new_avg_cost, case_cost, prev_case_cost,
+                        new_avg_cost, case_cost,
                         case_price, disc_pool,
                         state['item_id'],
                     ))
