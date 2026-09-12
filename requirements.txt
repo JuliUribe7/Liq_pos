@@ -3,3 +3,4 @@ python-dotenv==1.2.2
 bcrypt==5.0.0
 python-escpos==3.1
 pywin32==312
+customtkinter==6.0.0

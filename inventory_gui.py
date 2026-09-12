@@ -3,9 +3,11 @@ from datetime import datetime
 
 import tkinter as tk
 from tkinter import ttk, messagebox
+import customtkinter as ctk
 
 from db import get_conn
-from theme import Theme, bind_hover_effect
+from theme import Theme
+from ui_settings import scale_geometry, scale_dim, position_main_window, get_ui_scale
 
 
 def _parse_int_or_zero(value):
@@ -62,7 +64,7 @@ def _make_scrollable(parent, bg):
     canvas.pack(side="left", fill="both", expand=True)
     vsb.pack(side="right", fill="y")
 
-    inner = tk.Frame(canvas, bg=bg)
+    inner = ctk.CTkFrame(canvas, fg_color=bg, corner_radius=0)
     window_id = canvas.create_window((0, 0), window=inner, anchor="nw")
 
     def _on_inner_configure(event=None):
@@ -76,22 +78,22 @@ def _make_scrollable(parent, bg):
     return inner, canvas
 
 
-def _section_label(parent, text):
-    tk.Label(
-        parent, text=text, bg=parent['bg'], fg=Theme.ACCENT_GOLD,
-        font=(Theme.FONT_FAMILY, 12, "bold")
+def _section_label(parent, text, scale=1.0):
+    ctk.CTkLabel(
+        parent, text=text, fg_color="transparent", text_color=Theme.ACCENT_GOLD,
+        font=(Theme.FONT_FAMILY, scale_dim(12), "bold")
     ).pack(anchor="w", pady=(15, 5), padx=15)
 
 
-def _field_row(parent, label_text, widget_factory):
-    row = tk.Frame(parent, bg=parent['bg'])
+def _field_row(parent, label_text, widget_factory, scale=1.0):
+    row = ctk.CTkFrame(parent, fg_color="transparent")
     row.pack(fill="x", padx=15, pady=4)
-    tk.Label(
-        row, text=label_text, bg=parent['bg'], fg=Theme.TEXT_PRIMARY,
-        font=(Theme.FONT_FAMILY, 10), width=18, anchor="w"
+    ctk.CTkLabel(
+        row, text=label_text, fg_color="transparent", text_color=Theme.TEXT_PRIMARY,
+        font=(Theme.FONT_FAMILY, scale_dim(10)), width=scale_dim(140), anchor="w"
     ).pack(side="left")
     widget = widget_factory(row)
-    widget.pack(side="left", fill="x", expand=True, ipady=3)
+    widget.pack(side="left", fill="x", expand=True)
     return widget
 
 
@@ -173,6 +175,7 @@ def _fetch_computed_stats(item_id):
 
 
 def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=None, item_list=None, on_saved=None):
+    scale = get_ui_scale()
     item_list = item_list or []
     suppliers = _fetch_suppliers()
     # Keys are trimmed so vendor names with stray leading/trailing whitespace
@@ -182,10 +185,10 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
     # ever re-resolving by name unless the user actually changes the field.
     supplier_name_to_id = {name.strip(): sid for sid, name in suppliers}
 
-    dialog = tk.Toplevel(parent_win)
+    dialog = ctk.CTkToplevel(parent_win)
     dialog.title("Item Details")
-    dialog.geometry("780x680")
-    dialog.config(bg=Theme.BG_DARK)
+    dialog.geometry(scale_geometry(780, 680))
+    dialog.configure(**Theme.ctk_window_style())
     dialog.transient(parent_win)
 
     # state['supplier_id']/['vendor_loaded_name'] track the vendor as actually
@@ -194,21 +197,22 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
     state = {'item_id': item_id, 'mode': mode, 'supplier_id': None, 'vendor_loaded_name': ""}
 
     # --- Top nav/status bar ---
-    nav_frame = tk.Frame(dialog, bg=Theme.BG_DARK)
+    nav_frame = ctk.CTkFrame(dialog, fg_color=Theme.BG_DARK, corner_radius=0)
     nav_frame.pack(fill="x", padx=15, pady=(15, 5))
 
-    status_label = tk.Label(nav_frame, text="", bg=Theme.BG_DARK, fg=Theme.TEXT_SUCCESS,
-                             font=(Theme.FONT_FAMILY, 10, "bold"))
+    status_label = ctk.CTkLabel(nav_frame, text="", fg_color="transparent", text_color=Theme.TEXT_SUCCESS,
+                                 font=(Theme.FONT_FAMILY, scale_dim(10), "bold"))
     status_label.pack(side="right")
 
     def flash_status(text, ok=True):
-        status_label.config(text=text, fg=Theme.TEXT_SUCCESS if ok else Theme.TEXT_ERROR)
-        dialog.after(2500, lambda: status_label.config(text="") if dialog.winfo_exists() else None)
+        status_label.configure(text=text, text_color=Theme.TEXT_SUCCESS if ok else Theme.TEXT_ERROR)
+        dialog.after(2500, lambda: status_label.configure(text="") if dialog.winfo_exists() else None)
 
-    nav_btns_frame = tk.Frame(nav_frame, bg=Theme.BG_DARK)
+    nav_btns_frame = ctk.CTkFrame(nav_frame, fg_color=Theme.BG_DARK, corner_radius=0)
     nav_btns_frame.pack(side="left")
 
-    # --- Notebook ---
+    # --- Notebook — kept as ttk (no CTk equivalent low-risk enough for this
+    # dialog's tab-switching + scroll-canvas interplay); styled to blend in. ---
     style = ttk.Style()
     style.theme_use('clam')
     style.configure("TNotebook", background=Theme.BG_DARK, borderwidth=0)
@@ -256,19 +260,19 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
     discount_ok_var = tk.BooleanVar(value=True)
     on_hand_var = tk.StringVar(value="0")
 
-    _section_label(details_inner, "Product Info")
-    _field_row(details_inner, "Brand", lambda p: tk.Entry(p, textvariable=brand_var, **Theme.entry_style()))
-    _field_row(details_inner, "Description", lambda p: tk.Entry(p, textvariable=description_var, **Theme.entry_style()))
-    _field_row(details_inner, "Type", lambda p: tk.Entry(p, textvariable=type_var, **Theme.entry_style()))
-    _field_row(details_inner, "Size", lambda p: tk.Entry(p, textvariable=size_var, **Theme.entry_style()))
-    _field_row(details_inner, "Case Qty", lambda p: tk.Entry(p, textvariable=case_qty_var, **Theme.entry_style()))
-    _field_row(details_inner, "Barcode", lambda p: tk.Entry(p, textvariable=barcode_var, **Theme.entry_style()))
-    _field_row(details_inner, "On Hand", lambda p: tk.Entry(p, textvariable=on_hand_var, **Theme.entry_style()))
+    _section_label(details_inner, "Product Info", scale=scale)
+    _field_row(details_inner, "Brand", lambda p: ctk.CTkEntry(p, textvariable=brand_var, **Theme.ctk_entry_style(scale=scale)), scale=scale)
+    _field_row(details_inner, "Description", lambda p: ctk.CTkEntry(p, textvariable=description_var, **Theme.ctk_entry_style(scale=scale)), scale=scale)
+    _field_row(details_inner, "Type", lambda p: ctk.CTkEntry(p, textvariable=type_var, **Theme.ctk_entry_style(scale=scale)), scale=scale)
+    _field_row(details_inner, "Size", lambda p: ctk.CTkEntry(p, textvariable=size_var, **Theme.ctk_entry_style(scale=scale)), scale=scale)
+    _field_row(details_inner, "Case Qty", lambda p: ctk.CTkEntry(p, textvariable=case_qty_var, **Theme.ctk_entry_style(scale=scale)), scale=scale)
+    _field_row(details_inner, "Barcode", lambda p: ctk.CTkEntry(p, textvariable=barcode_var, **Theme.ctk_entry_style(scale=scale)), scale=scale)
+    _field_row(details_inner, "On Hand", lambda p: ctk.CTkEntry(p, textvariable=on_hand_var, **Theme.ctk_entry_style(scale=scale)), scale=scale)
 
-    _section_label(details_inner, "Vendor & Purchasing")
+    _section_label(details_inner, "Vendor & Purchasing", scale=scale)
     all_vendor_names = [name for _, name in suppliers]
     vendor_combo = _field_row(details_inner, "Vendor", lambda p: ttk.Combobox(
-        p, textvariable=vendor_var, values=all_vendor_names, state="normal"))
+        p, textvariable=vendor_var, values=all_vendor_names, state="normal"), scale=scale)
 
     def on_vendor_selected(event=None):
         # Resolve by matching the selected text against `suppliers` (not by
@@ -300,55 +304,54 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
             vendor_combo.event_generate('<Down>')
 
     vendor_combo.bind("<KeyRelease>", on_vendor_keyrelease)
-    _field_row(details_inner, "Vendor Item", lambda p: tk.Entry(p, textvariable=vendor_item_var, **Theme.entry_style()))
-    _field_row(details_inner, "Last Order", lambda p: tk.Entry(p, textvariable=last_order_var, **Theme.entry_style()))
-    _field_row(details_inner, "Last Receive", lambda p: tk.Entry(p, textvariable=last_receive_var, **Theme.entry_style()))
+    _field_row(details_inner, "Vendor Item", lambda p: ctk.CTkEntry(p, textvariable=vendor_item_var, **Theme.ctk_entry_style(scale=scale)), scale=scale)
+    _field_row(details_inner, "Last Order", lambda p: ctk.CTkEntry(p, textvariable=last_order_var, **Theme.ctk_entry_style(scale=scale)), scale=scale)
+    _field_row(details_inner, "Last Receive", lambda p: ctk.CTkEntry(p, textvariable=last_receive_var, **Theme.ctk_entry_style(scale=scale)), scale=scale)
 
-    _section_label(details_inner, "Stock & Reorder")
-    _field_row(details_inner, "Par Level", lambda p: tk.Entry(p, textvariable=par_level_var, **Theme.entry_style()))
-    _field_row(details_inner, "Reorder Point", lambda p: tk.Entry(p, textvariable=reorder_pt_var, **Theme.entry_style()))
-    _field_row(details_inner, "On Order", lambda p: tk.Entry(p, textvariable=on_order_var, **Theme.entry_style()))
+    _section_label(details_inner, "Stock & Reorder", scale=scale)
+    _field_row(details_inner, "Par Level", lambda p: ctk.CTkEntry(p, textvariable=par_level_var, **Theme.ctk_entry_style(scale=scale)), scale=scale)
+    _field_row(details_inner, "Reorder Point", lambda p: ctk.CTkEntry(p, textvariable=reorder_pt_var, **Theme.ctk_entry_style(scale=scale)), scale=scale)
+    _field_row(details_inner, "On Order", lambda p: ctk.CTkEntry(p, textvariable=on_order_var, **Theme.ctk_entry_style(scale=scale)), scale=scale)
 
-    order_lot_row = tk.Frame(details_inner, bg=Theme.BG_FRAME)
+    order_lot_row = ctk.CTkFrame(details_inner, fg_color="transparent")
     order_lot_row.pack(fill="x", padx=15, pady=4)
-    tk.Label(order_lot_row, text="Order Lot", bg=Theme.BG_FRAME, fg=Theme.TEXT_PRIMARY,
-             font=(Theme.FONT_FAMILY, 10), width=18, anchor="w").pack(side="left")
+    ctk.CTkLabel(order_lot_row, text="Order Lot", fg_color="transparent", text_color=Theme.TEXT_PRIMARY,
+                 font=(Theme.FONT_FAMILY, scale_dim(10)), width=scale_dim(140), anchor="w").pack(side="left")
     for label, value in [("Case", "case"), ("Unit", "unit")]:
-        tk.Radiobutton(order_lot_row, text=label, variable=order_lot_var, value=value,
-                        bg=Theme.BG_FRAME, fg=Theme.TEXT_PRIMARY, selectcolor=Theme.BG_BUTTON,
-                        activebackground=Theme.BG_FRAME, font=(Theme.FONT_FAMILY, 10)).pack(side="left", padx=5)
+        ctk.CTkRadioButton(order_lot_row, text=label, variable=order_lot_var, value=value,
+                            fg_color=Theme.ACCENT_GOLD, hover_color=Theme.ACCENT_GOLD_DARK,
+                            text_color=Theme.TEXT_PRIMARY, font=(Theme.FONT_FAMILY, scale_dim(10))).pack(side="left", padx=5)
 
-    _section_label(details_inner, "Deposits & Tax")
+    _section_label(details_inner, "Deposits & Tax", scale=scale)
 
-    deposit_sale_row = tk.Frame(details_inner, bg=Theme.BG_FRAME)
+    deposit_sale_row = ctk.CTkFrame(details_inner, fg_color="transparent")
     deposit_sale_row.pack(fill="x", padx=15, pady=4)
-    tk.Checkbutton(deposit_sale_row, text="Deposit on Sale", variable=deposit_sale_enabled_var,
-                    bg=Theme.BG_FRAME, fg=Theme.TEXT_PRIMARY, selectcolor=Theme.BG_BUTTON,
-                    activebackground=Theme.BG_FRAME, font=(Theme.FONT_FAMILY, 10)).pack(side="left")
-    tk.Entry(deposit_sale_row, textvariable=deposit_sale_amount_var, **Theme.entry_style(), width=10).pack(side="left", padx=10, ipady=3)
+    ctk.CTkCheckBox(deposit_sale_row, text="Deposit on Sale", variable=deposit_sale_enabled_var,
+                     **Theme.ctk_checkbox_style(scale=scale)).pack(side="left")
+    ctk.CTkEntry(deposit_sale_row, textvariable=deposit_sale_amount_var, width=scale_dim(100), **Theme.ctk_entry_style(scale=scale)).pack(side="left", padx=10)
 
-    deposit_return_row = tk.Frame(details_inner, bg=Theme.BG_FRAME)
+    deposit_return_row = ctk.CTkFrame(details_inner, fg_color="transparent")
     deposit_return_row.pack(fill="x", padx=15, pady=4)
-    tk.Checkbutton(deposit_return_row, text="Deposit on Return", variable=deposit_return_enabled_var,
-                    bg=Theme.BG_FRAME, fg=Theme.TEXT_PRIMARY, selectcolor=Theme.BG_BUTTON,
-                    activebackground=Theme.BG_FRAME, font=(Theme.FONT_FAMILY, 10)).pack(side="left")
-    tk.Entry(deposit_return_row, textvariable=deposit_return_amount_var, **Theme.entry_style(), width=10).pack(side="left", padx=10, ipady=3)
+    ctk.CTkCheckBox(deposit_return_row, text="Deposit on Return", variable=deposit_return_enabled_var,
+                     **Theme.ctk_checkbox_style(scale=scale)).pack(side="left")
+    ctk.CTkEntry(deposit_return_row, textvariable=deposit_return_amount_var, width=scale_dim(100), **Theme.ctk_entry_style(scale=scale)).pack(side="left", padx=10)
 
-    tax_discount_row = tk.Frame(details_inner, bg=Theme.BG_FRAME)
+    tax_discount_row = ctk.CTkFrame(details_inner, fg_color="transparent")
     tax_discount_row.pack(fill="x", padx=15, pady=4)
-    tk.Checkbutton(tax_discount_row, text="Sales Tax", variable=sales_tax_var,
-                    bg=Theme.BG_FRAME, fg=Theme.TEXT_PRIMARY, selectcolor=Theme.BG_BUTTON,
-                    activebackground=Theme.BG_FRAME, font=(Theme.FONT_FAMILY, 10)).pack(side="left", padx=(0, 20))
-    tk.Checkbutton(tax_discount_row, text="Discount OK", variable=discount_ok_var,
-                    bg=Theme.BG_FRAME, fg=Theme.TEXT_PRIMARY, selectcolor=Theme.BG_BUTTON,
-                    activebackground=Theme.BG_FRAME, font=(Theme.FONT_FAMILY, 10)).pack(side="left")
+    ctk.CTkCheckBox(tax_discount_row, text="Sales Tax", variable=sales_tax_var,
+                    **Theme.ctk_checkbox_style(scale=scale)).pack(side="left", padx=(0, 20))
+    ctk.CTkCheckBox(tax_discount_row, text="Discount OK", variable=discount_ok_var,
+                    **Theme.ctk_checkbox_style(scale=scale)).pack(side="left")
 
-    _section_label(details_inner, "Notes")
-    notes_text = tk.Text(details_inner, height=4, **Theme.entry_style())
+    _section_label(details_inner, "Notes", scale=scale)
+    notes_text = tk.Text(details_inner, height=4, bg=Theme.BG_INPUT, fg=Theme.TEXT_PRIMARY,
+                          font=(Theme.FONT_FAMILY, Theme.FONT_SIZE_NORMAL), relief="flat",
+                          insertbackground=Theme.TEXT_PRIMARY, highlightthickness=2,
+                          highlightbackground=Theme.BORDER_DEFAULT, highlightcolor=Theme.BORDER_FOCUS)
     notes_text.pack(fill="x", padx=15, pady=(4, 10))
 
-    stats_label = tk.Label(details_inner, text="", bg=Theme.BG_FRAME, fg=Theme.TEXT_SECONDARY,
-                            font=(Theme.FONT_FAMILY, 10), justify="left", anchor="w")
+    stats_label = ctk.CTkLabel(details_inner, text="", fg_color="transparent", text_color=Theme.TEXT_SECONDARY,
+                                font=(Theme.FONT_FAMILY, scale_dim(10)), justify="left", anchor="w")
     stats_label.pack(fill="x", padx=15, pady=(0, 15))
 
     # ================= Costs & Pricing tab =================
@@ -365,34 +368,34 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
     case_price_var = tk.StringVar(value="0.00")
     disc_pool_var = tk.StringVar(value="")
 
-    _section_label(costs_inner, "Costs")
-    _field_row(costs_inner, "Latest Cost", lambda p: tk.Entry(p, textvariable=latest_cost_var, **Theme.entry_style()))
-    _field_row(costs_inner, "Case Cost", lambda p: tk.Entry(p, textvariable=case_cost_var, **Theme.entry_style()))
-    _field_row(costs_inner, "Avg Cost", lambda p: tk.Entry(p, textvariable=avg_cost_var, state="readonly", readonlybackground=Theme.BG_INPUT, **Theme.entry_style()))
-    _field_row(costs_inner, "Qty Received", lambda p: tk.Entry(p, textvariable=qty_received_var, **Theme.entry_style()))
-    _field_row(costs_inner, "Markup %", lambda p: tk.Entry(p, textvariable=markup_var, **Theme.entry_style()))
-    _field_row(costs_inner, "Margin %", lambda p: tk.Entry(p, textvariable=margin_var, **Theme.entry_style()))
+    _section_label(costs_inner, "Costs", scale=scale)
+    _field_row(costs_inner, "Latest Cost", lambda p: ctk.CTkEntry(p, textvariable=latest_cost_var, **Theme.ctk_entry_style(scale=scale)), scale=scale)
+    _field_row(costs_inner, "Case Cost", lambda p: ctk.CTkEntry(p, textvariable=case_cost_var, **Theme.ctk_entry_style(scale=scale)), scale=scale)
+    _field_row(costs_inner, "Avg Cost", lambda p: ctk.CTkEntry(p, textvariable=avg_cost_var, state="readonly", **Theme.ctk_entry_style(scale=scale)), scale=scale)
+    _field_row(costs_inner, "Qty Received", lambda p: ctk.CTkEntry(p, textvariable=qty_received_var, **Theme.ctk_entry_style(scale=scale)), scale=scale)
+    _field_row(costs_inner, "Markup %", lambda p: ctk.CTkEntry(p, textvariable=markup_var, **Theme.ctk_entry_style(scale=scale)), scale=scale)
+    _field_row(costs_inner, "Margin %", lambda p: ctk.CTkEntry(p, textvariable=margin_var, **Theme.ctk_entry_style(scale=scale)), scale=scale)
 
-    tk.Label(
+    ctk.CTkLabel(
         costs_inner,
         text="Qty Received: how many units you're adding to On Hand right now at the Latest Cost above. "
              "Leave at 0 if you're not receiving stock this edit (e.g. just correcting On Hand). "
              "Avg Cost recalculates from this using the weighted-average method.",
-        bg=Theme.BG_FRAME, fg=Theme.TEXT_SECONDARY, font=(Theme.FONT_FAMILY, 9),
-        wraplength=500, justify="left", anchor="w"
+        fg_color="transparent", text_color=Theme.TEXT_SECONDARY, font=(Theme.FONT_FAMILY, scale_dim(9)),
+        wraplength=scale_dim(500), justify="left", anchor="w"
     ).pack(fill="x", padx=15, pady=(0, 10))
 
-    price_warning_label = tk.Label(
-        costs_inner, text="", bg=Theme.BG_FRAME, fg=Theme.TEXT_WARNING,
-        font=(Theme.FONT_FAMILY, Theme.FONT_SIZE_SMALL, "bold"),
-        wraplength=500, justify="left", anchor="w"
+    price_warning_label = ctk.CTkLabel(
+        costs_inner, text="", fg_color="transparent", text_color=Theme.TEXT_WARNING,
+        font=(Theme.FONT_FAMILY, scale_dim(Theme.FONT_SIZE_SMALL), "bold"),
+        wraplength=scale_dim(500), justify="left", anchor="w"
     )
     price_warning_label.pack(fill="x", padx=15, pady=(0, 5))
 
-    _section_label(costs_inner, "Prices")
-    _field_row(costs_inner, "Standard Price", lambda p: tk.Entry(p, textvariable=price_var, **Theme.entry_style()))
-    _field_row(costs_inner, "Case Price", lambda p: tk.Entry(p, textvariable=case_price_var, **Theme.entry_style()))
-    _field_row(costs_inner, "Discount Pool", lambda p: tk.Entry(p, textvariable=disc_pool_var, **Theme.entry_style()))
+    _section_label(costs_inner, "Prices", scale=scale)
+    _field_row(costs_inner, "Standard Price", lambda p: ctk.CTkEntry(p, textvariable=price_var, **Theme.ctk_entry_style(scale=scale)), scale=scale)
+    _field_row(costs_inner, "Case Price", lambda p: ctk.CTkEntry(p, textvariable=case_price_var, **Theme.ctk_entry_style(scale=scale)), scale=scale)
+    _field_row(costs_inner, "Discount Pool", lambda p: ctk.CTkEntry(p, textvariable=disc_pool_var, **Theme.ctk_entry_style(scale=scale)), scale=scale)
 
     # Price, Markup %, and Margin % are three mutually-derivable views of the
     # same relationship (given Cost). Editing any one recalculates the other
@@ -417,13 +420,13 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
 
     def _refresh_warning(cost, cost_label, price):
         if not price_var.get().strip() or price <= 0:
-            price_warning_label.config(text="⚠ Price is blank — set a selling price before saving.")
+            price_warning_label.configure(text="⚠ Price is blank — set a selling price before saving.")
         elif cost > 0 and price < cost:
-            price_warning_label.config(
+            price_warning_label.configure(
                 text=f"⚠ Price (${price:.2f}) is below {cost_label} (${cost:.2f}) — this item would sell at a loss."
             )
         else:
-            price_warning_label.config(text="")
+            price_warning_label.configure(text="")
 
     def _parse_pct(var):
         text = var.get().strip().rstrip('%').strip()
@@ -529,7 +532,7 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
             notes_text.insert("1.0", data['item_notes'])
 
         last_sale_text = _fmt_date(stats['last_sale']) if stats['last_sale'] else "Never"
-        stats_label.config(text=f"Last Sale: {last_sale_text}    MTD Sold: {stats['mtd']}    YTD Sold: {stats['ytd']}")
+        stats_label.configure(text=f"Last Sale: {last_sale_text}    MTD Sold: {stats['mtd']}    YTD Sold: {stats['ytd']}")
 
         latest_cost_var.set(f"{data.get('cost') or 0:.2f}" if data else "0.00")
         case_cost_var.set(f"{data.get('case_cost') or 0:.2f}" if data else "0.00")
@@ -572,19 +575,18 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
         if item_list:
             load_item(item_list[-1])
 
-    nav_first_btn = tk.Button(nav_btns_frame, text="|< First", command=go_first, **Theme.button_style(), width=8)
-    nav_prev_btn = tk.Button(nav_btns_frame, text="< Prev", command=go_prev, **Theme.button_style(), width=8)
-    nav_next_btn = tk.Button(nav_btns_frame, text="Next >", command=go_next, **Theme.button_style(), width=8)
-    nav_last_btn = tk.Button(nav_btns_frame, text="Last >|", command=go_last, **Theme.button_style(), width=8)
+    nav_first_btn = ctk.CTkButton(nav_btns_frame, text="|< First", command=go_first, **Theme.ctk_button_style(scale=scale), width=scale_dim(90))
+    nav_prev_btn = ctk.CTkButton(nav_btns_frame, text="< Prev", command=go_prev, **Theme.ctk_button_style(scale=scale), width=scale_dim(90))
+    nav_next_btn = ctk.CTkButton(nav_btns_frame, text="Next >", command=go_next, **Theme.ctk_button_style(scale=scale), width=scale_dim(90))
+    nav_last_btn = ctk.CTkButton(nav_btns_frame, text="Last >|", command=go_last, **Theme.ctk_button_style(scale=scale), width=scale_dim(90))
     for b in (nav_first_btn, nav_prev_btn, nav_next_btn, nav_last_btn):
         b.pack(side="left", padx=3)
-        bind_hover_effect(b)
 
     def update_nav_state():
         nav_enabled = state['mode'] == 'edit' and bool(item_list)
         widget_state = "normal" if nav_enabled else "disabled"
         for b in (nav_first_btn, nav_prev_btn, nav_next_btn, nav_last_btn):
-            b.config(state=widget_state)
+            b.configure(state=widget_state)
 
     # ================= Save / Close =================
     def do_save():
@@ -749,13 +751,12 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
     def do_close():
         dialog.destroy()
 
-    btn_frame = tk.Frame(dialog, bg=Theme.BG_DARK)
+    btn_frame = ctk.CTkFrame(dialog, fg_color=Theme.BG_DARK, corner_radius=0)
     btn_frame.pack(fill="x", padx=15, pady=(0, 15))
-    save_btn = tk.Button(btn_frame, text="Save", command=do_save, **Theme.primary_button_style(), width=14)
+    save_btn = ctk.CTkButton(btn_frame, text="Save", command=do_save, **Theme.ctk_primary_button_style(scale=scale), width=scale_dim(120))
     save_btn.pack(side="left", padx=(0, 10))
-    close_btn = tk.Button(btn_frame, text="Close", command=do_close, **Theme.button_style(), width=14)
+    close_btn = ctk.CTkButton(btn_frame, text="Close", command=do_close, **Theme.ctk_button_style(scale=scale), width=scale_dim(120))
     close_btn.pack(side="left")
-    bind_hover_effect(close_btn)
 
     def _dialog_mousewheel(event):
         # bind_all is process-wide, so if another dialog/window also has a
@@ -785,54 +786,67 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
 
 
 def open_inventory_window():
-    win = tk.Toplevel()
+    scale = get_ui_scale()
+    win = ctk.CTkToplevel()
     win.title("Inventory Management")
-    win.geometry("1500x750")
-    win.config(**Theme.window_style())
+    win.geometry(scale_geometry(1500, 750))
+    win.configure(**Theme.ctk_window_style())
+    win.after(60, lambda: position_main_window(win))
 
     style = ttk.Style()
     style.theme_use('clam')
+    # Smaller than Sales/Reports' Treeview font deliberately: this table has
+    # 10 fixed-pixel-width columns (Item ID, Barcode, Brand, etc. — set
+    # below via tree.column(width=...), which don't scale with UI_SCALE the
+    # way fonts do), so a font sized for a 2-3 column cart table was
+    # overflowing these narrower columns and clipping the headers.
     style.configure("Treeview",
                     background=Theme.BG_BUTTON,
                     foreground=Theme.TEXT_PRIMARY,
                     fieldbackground=Theme.BG_BUTTON,
-                    borderwidth=0)
+                    borderwidth=0,
+                    font=(Theme.FONT_FAMILY, 9),
+                    rowheight=scale_dim(24))
     style.configure("Treeview.Heading",
                     background=Theme.BG_FRAME,
                     foreground=Theme.ACCENT_GOLD,
                     relief="flat",
-                    font=(Theme.FONT_FAMILY, 11, 'bold'))
+                    font=(Theme.FONT_FAMILY, 9, 'bold'))
     style.map('Treeview', background=[('selected', Theme.ACCENT_GOLD)])
 
     # Header
-    header_frame = tk.Frame(win, bg=Theme.BG_DARK)
+    header_frame = ctk.CTkFrame(win, fg_color=Theme.BG_DARK, corner_radius=0)
     header_frame.pack(fill='x', pady=(20, 10))
 
-    tk.Label(
+    ctk.CTkLabel(
         header_frame,
         text="Inventory Management",
-        bg=Theme.BG_DARK,
-        fg=Theme.ACCENT_GOLD,
-        font=(Theme.FONT_FAMILY, 20, "bold")
+        fg_color="transparent",
+        text_color=Theme.ACCENT_GOLD,
+        font=(Theme.FONT_FAMILY, scale_dim(20), "bold")
     ).pack()
 
     # Main container
-    main_container = tk.Frame(win, bg=Theme.BG_DARK)
+    main_container = ctk.CTkFrame(win, fg_color=Theme.BG_DARK, corner_radius=0)
     main_container.pack(fill='both', expand=True, padx=20, pady=10)
 
-    # Search + barcode row
-    search_frame = tk.Frame(main_container, **Theme.frame_style())
-    search_frame.pack(pady=(0, 15), fill="x")
+    # Search + barcode row. Padding here (and around the action buttons
+    # below) is intentionally tight, not just cosmetic: on a 1366x768
+    # screen there isn't enough spare vertical room for both loose padding
+    # and full-size buttons, and looser padding was squeezing the New/
+    # Edit/Delete/Show Low Stock/Back row shorter than its real size.
+    search_frame = ctk.CTkFrame(main_container, **Theme.ctk_frame_style())
+    search_frame.pack(pady=(0, 8), fill="x")
 
-    search_inner = tk.Frame(search_frame, bg=Theme.BG_FRAME)
-    search_inner.pack(padx=20, pady=15, fill="x")
+    search_inner = ctk.CTkFrame(search_frame, fg_color="transparent")
+    search_inner.pack(padx=20, pady=8, fill="x")
 
-    tk.Label(
+    ctk.CTkLabel(
         search_inner,
         text="Search:",
-        bg=Theme.BG_FRAME,
-        fg=Theme.TEXT_PRIMARY,
-        font=(Theme.FONT_FAMILY, 11, 'bold')
+        fg_color="transparent",
+        text_color=Theme.TEXT_PRIMARY,
+        font=(Theme.FONT_FAMILY, scale_dim(11), 'bold')
     ).pack(side="left", padx=(0, 10))
 
     search_field_var = tk.StringVar(value="All Fields")
@@ -842,35 +856,33 @@ def open_inventory_window():
     )
     search_field_combo.pack(side="left", padx=(0, 10))
 
-    search_entry = tk.Entry(search_inner, **Theme.entry_style(), width=30)
-    search_entry.pack(side="left", padx=5, ipady=6)
+    search_entry = ctk.CTkEntry(search_inner, width=scale_dim(300), **Theme.ctk_entry_style(scale=scale))
+    search_entry.pack(side="left", padx=5)
 
     def search_items():
         load_inventory(search_entry.get().strip(), search_field_var.get())
 
-    search_btn = tk.Button(
+    search_btn = ctk.CTkButton(
         search_inner,
         text="Search",
         command=search_items,
-        **Theme.button_style(),
-        width=10
+        **Theme.ctk_button_style(scale=scale),
+        width=scale_dim(100)
     )
     search_btn.pack(side="left", padx=5)
-    bind_hover_effect(search_btn)
 
-    refresh_btn = tk.Button(
+    refresh_btn = ctk.CTkButton(
         search_inner,
         text="Refresh",
         command=lambda: load_inventory(),
-        **Theme.button_style(),
-        width=10
+        **Theme.ctk_button_style(scale=scale),
+        width=scale_dim(100)
     )
     refresh_btn.pack(side="left", padx=5)
-    bind_hover_effect(refresh_btn)
 
     # Treeview Frame
-    tree_frame = tk.Frame(main_container, **Theme.frame_style())
-    tree_frame.pack(fill="both", expand=True, pady=(0, 15))
+    tree_frame = ctk.CTkFrame(main_container, **Theme.ctk_frame_style())
+    tree_frame.pack(fill="both", expand=True, pady=(0, 8))
 
     # Scrollbars
     vsb = ttk.Scrollbar(tree_frame, orient="vertical")
@@ -987,17 +999,20 @@ def open_inventory_window():
 
     tree.bind('<Double-1>', on_row_double_click)
 
-    # Action buttons frame
-    action_frame = tk.Frame(main_container, **Theme.frame_style())
-    action_frame.pack(pady=10)
+    # Action buttons frame. side="bottom" reserves this row's full height
+    # first, before tree_frame's expand=True above it claims the rest — on
+    # a short screen (e.g. 1366x768) without it, Tk squeezes these buttons
+    # shorter than their real size instead of just showing fewer tree rows,
+    # which is the far less noticeable place to lose the space.
+    action_frame = ctk.CTkFrame(main_container, **Theme.ctk_frame_style())
+    action_frame.pack(side="bottom", pady=6)
 
-    action_inner = tk.Frame(action_frame, bg=Theme.BG_FRAME)
-    action_inner.pack(padx=20, pady=15)
+    action_inner = ctk.CTkFrame(action_frame, fg_color="transparent")
+    action_inner.pack(padx=20, pady=8)
 
     def make_toolbar_btn(text, command):
-        b = tk.Button(action_inner, text=text, command=command, **Theme.button_style(), width=14)
+        b = ctk.CTkButton(action_inner, text=text, command=command, **Theme.ctk_button_style(scale=scale), width=scale_dim(140))
         b.pack(side="left", padx=6)
-        bind_hover_effect(b)
         return b
 
     make_toolbar_btn("New", lambda: open_item_dialog(mode="new"))
@@ -1082,17 +1097,17 @@ def open_inventory_window():
     make_toolbar_btn("Show Low Stock", show_low_stock)
 
     # Back button
-    back_btn = tk.Button(
+    back_btn = ctk.CTkButton(
         action_inner,
         text="← Back",
         command=win.destroy,
-        bg="#DC3545",
-        fg=Theme.TEXT_PRIMARY,
-        font=(Theme.FONT_FAMILY, Theme.FONT_SIZE_NORMAL, "bold"),
-        relief="flat",
-        width=12,
-        activebackground="#C82333",
-        cursor='hand2'
+        fg_color="#DC3545",
+        text_color=Theme.TEXT_PRIMARY,
+        hover_color="#C82333",
+        font=(Theme.FONT_FAMILY, scale_dim(Theme.FONT_SIZE_NORMAL), "bold"),
+        corner_radius=8,
+        border_width=0,
+        width=scale_dim(120),
     )
     back_btn.pack(side="left", padx=6)
 
@@ -1101,3 +1116,5 @@ def open_inventory_window():
 
     # Bind Enter key to search
     search_entry.bind('<Return>', lambda e: search_items())
+
+    return win

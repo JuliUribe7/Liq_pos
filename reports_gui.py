@@ -1,35 +1,43 @@
 # reports_gui.py
 import tkinter as tk
 from tkinter import ttk, messagebox
+import customtkinter as ctk
 from datetime import datetime, timedelta
 from db import get_conn
-from theme import Theme, bind_hover_effect
+from theme import Theme
 from receipt import print_receipt, STORE_NAME
+from ui_settings import scale_geometry, scale_dim, position_main_window, get_ui_scale
 
 def open_reports_window(current_user):
-    win = tk.Toplevel()
+    scale = get_ui_scale()
+    win = ctk.CTkToplevel()
     win.title("Reports & Analytics")
-    win.geometry("1200x700")
-    win.config(**Theme.window_style())
+    win.geometry(scale_geometry(1200, 700))
+    win.configure(**Theme.ctk_window_style())
+    win.after(60, lambda: position_main_window(win))
 
-    # Configure ttk style
+    # Configure ttk style — Treeview/Notebook have no CTk equivalent used
+    # here, so they stay ttk, styled to blend in with the CTk widgets
+    # around them.
     style = ttk.Style()
     style.theme_use('clam')
     style.configure("Treeview",
                     background=Theme.BG_BUTTON,
                     foreground=Theme.TEXT_PRIMARY,
                     fieldbackground=Theme.BG_BUTTON,
-                    borderwidth=0)
+                    borderwidth=0,
+                    font=(Theme.FONT_FAMILY, Theme.FONT_SIZE_NORMAL),
+                    rowheight=scale_dim(30))
     style.configure("Treeview.Heading",
                     background=Theme.BG_FRAME,
                     foreground=Theme.ACCENT_GOLD,
                     relief="flat",
                     font=(Theme.FONT_FAMILY, 11, 'bold'))
     style.map('Treeview', background=[('selected', Theme.ACCENT_GOLD)])
-    
+
     # Configure notebook style
     style.configure("TNotebook", background=Theme.BG_DARK, borderwidth=0)
-    style.configure("TNotebook.Tab", 
+    style.configure("TNotebook.Tab",
                     background=Theme.BG_BUTTON,
                     foreground=Theme.TEXT_PRIMARY,
                     padding=[20, 10],
@@ -39,15 +47,15 @@ def open_reports_window(current_user):
               foreground=[("selected", Theme.ACCENT_GOLD)])
 
     # Header
-    header_frame = tk.Frame(win, bg=Theme.BG_DARK)
+    header_frame = ctk.CTkFrame(win, fg_color=Theme.BG_DARK, corner_radius=0)
     header_frame.pack(fill='x', pady=(20, 10))
 
-    tk.Label(
+    ctk.CTkLabel(
         header_frame,
         text="Reports & Analytics",
-        bg=Theme.BG_DARK,
-        fg=Theme.ACCENT_GOLD,
-        font=(Theme.FONT_FAMILY, 20, "bold")
+        fg_color="transparent",
+        text_color=Theme.ACCENT_GOLD,
+        font=(Theme.FONT_FAMILY, scale_dim(20), "bold")
     ).pack()
 
     # Notebook for different reports
@@ -59,35 +67,33 @@ def open_reports_window(current_user):
     notebook.add(sales_tab, text="Sales Report")
 
     # Date filter frame
-    date_frame = tk.Frame(sales_tab, **Theme.frame_style())
+    date_frame = ctk.CTkFrame(sales_tab, **Theme.ctk_frame_style())
     date_frame.pack(pady=15, padx=20, fill="x")
 
-    date_inner = tk.Frame(date_frame, bg=Theme.BG_FRAME)
+    date_inner = ctk.CTkFrame(date_frame, fg_color="transparent")
     date_inner.pack(padx=20, pady=15)
 
-    tk.Label(
+    ctk.CTkLabel(
         date_inner,
         text="Period:",
-        bg=Theme.BG_FRAME,
-        fg=Theme.TEXT_PRIMARY,
-        font=(Theme.FONT_FAMILY, 11, 'bold')
+        fg_color="transparent",
+        text_color=Theme.TEXT_PRIMARY,
+        font=(Theme.FONT_FAMILY, scale_dim(11), 'bold')
     ).pack(side="left", padx=(0, 15))
 
     period_var = tk.StringVar(value="today")
     periods = [("Today", "today"), ("This Week", "week"), ("This Month", "month"), ("All Time", "all")]
-    
+
     for text, value in periods:
-        tk.Radiobutton(
+        ctk.CTkRadioButton(
             date_inner,
             text=text,
             variable=period_var,
             value=value,
-            bg=Theme.BG_FRAME,
-            fg=Theme.TEXT_PRIMARY,
-            selectcolor=Theme.BG_BUTTON,
-            activebackground=Theme.BG_FRAME,
-            activeforeground=Theme.TEXT_PRIMARY,
-            font=(Theme.FONT_FAMILY, 10)
+            fg_color=Theme.ACCENT_GOLD,
+            hover_color=Theme.ACCENT_GOLD_DARK,
+            text_color=Theme.TEXT_PRIMARY,
+            font=(Theme.FONT_FAMILY, scale_dim(10))
         ).pack(side="left", padx=10)
 
     def load_sales_report():
@@ -98,7 +104,7 @@ def open_reports_window(current_user):
             conn = get_conn()
             with conn.cursor() as cur:
                 period = period_var.get()
-                
+
                 if period == "today":
                     date_filter = "DATE(sale_date) = CURRENT_DATE"
                 elif period == "week":
@@ -152,27 +158,26 @@ def open_reports_window(current_user):
                     avg_sale = total_sales / total_transactions
                     avg_str = f"-${abs(avg_sale):.2f}" if avg_sale < 0 else f"${avg_sale:.2f}"
                     summary_text += f" | Average: {avg_str}"
-                summary_label.config(text=summary_text)
+                summary_label.configure(text=summary_text)
 
             conn.close()
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load sales report: {str(e)}")
 
-    refresh_btn = tk.Button(
+    refresh_btn = ctk.CTkButton(
         date_inner,
         text="Load Report",
         command=load_sales_report,
-        **Theme.button_style(),
-        width=12
+        **Theme.ctk_button_style(scale=scale),
+        width=scale_dim(140)
     )
     refresh_btn.pack(side="left", padx=20)
-    bind_hover_effect(refresh_btn)
 
     # Sales treeview frame
-    tree_container = tk.Frame(sales_tab, **Theme.frame_style())
+    tree_container = ctk.CTkFrame(sales_tab, **Theme.ctk_frame_style())
     tree_container.pack(fill="both", expand=True, padx=20, pady=(0, 15))
 
-    tree_frame = tk.Frame(tree_container, bg=Theme.BG_FRAME)
+    tree_frame = ctk.CTkFrame(tree_container, fg_color=Theme.BG_FRAME, corner_radius=0)
     tree_frame.pack(fill="both", expand=True, padx=15, pady=15)
 
     sales_scroll = ttk.Scrollbar(tree_frame)
@@ -241,15 +246,14 @@ def open_reports_window(current_user):
                 conn.close()
             messagebox.showerror("Error", f"Failed to void sale: {str(e)}")
 
-    void_btn = tk.Button(
+    void_btn = ctk.CTkButton(
         sales_tab,
         text="Void Selected Sale",
         command=void_selected_sale,
-        **Theme.button_style(),
-        width=18
+        **Theme.ctk_button_style(scale=scale),
+        width=scale_dim(180)
     )
     void_btn.pack(pady=(0, 10))
-    bind_hover_effect(void_btn)
 
     def refund_selected_sale():
         selected = sales_tree.selection()
@@ -400,23 +404,22 @@ def open_reports_window(current_user):
         )
         load_sales_report()
 
-    refund_btn = tk.Button(
+    refund_btn = ctk.CTkButton(
         sales_tab,
         text="Refund Selected Sale",
         command=refund_selected_sale,
-        **Theme.button_style(),
-        width=18
+        **Theme.ctk_button_style(scale=scale),
+        width=scale_dim(180)
     )
     refund_btn.pack(pady=(0, 10))
-    bind_hover_effect(refund_btn)
 
     # Summary label
-    summary_label = tk.Label(
+    summary_label = ctk.CTkLabel(
         sales_tab,
         text="Transactions: 0 | Total Sales: $0.00",
-        bg=Theme.BG_DARK,
-        fg=Theme.ACCENT_GOLD,
-        font=(Theme.FONT_FAMILY, 12, "bold")
+        fg_color="transparent",
+        text_color=Theme.ACCENT_GOLD,
+        font=(Theme.FONT_FAMILY, scale_dim(12), "bold")
     )
     summary_label.pack(pady=15)
 
@@ -425,67 +428,65 @@ def open_reports_window(current_user):
     takings_tab = tk.Frame(notebook, bg=Theme.BG_DARK)
     notebook.add(takings_tab, text="Takings")
 
-    tk.Label(
+    ctk.CTkLabel(
         takings_tab,
         text="Takings",
-        bg=Theme.BG_DARK,
-        fg=Theme.ACCENT_GOLD,
-        font=(Theme.FONT_FAMILY, 14, "bold")
+        fg_color="transparent",
+        text_color=Theme.ACCENT_GOLD,
+        font=(Theme.FONT_FAMILY, scale_dim(14), "bold")
     ).pack(pady=15)
 
-    takings_date_frame = tk.Frame(takings_tab, **Theme.frame_style())
+    takings_date_frame = ctk.CTkFrame(takings_tab, **Theme.ctk_frame_style())
     takings_date_frame.pack(pady=(0, 15), padx=20, fill="x")
 
-    takings_date_inner = tk.Frame(takings_date_frame, bg=Theme.BG_FRAME)
+    takings_date_inner = ctk.CTkFrame(takings_date_frame, fg_color="transparent")
     takings_date_inner.pack(padx=20, pady=15)
 
-    tk.Label(
+    ctk.CTkLabel(
         takings_date_inner,
         text="Period:",
-        bg=Theme.BG_FRAME,
-        fg=Theme.TEXT_PRIMARY,
-        font=(Theme.FONT_FAMILY, 11, 'bold')
+        fg_color="transparent",
+        text_color=Theme.TEXT_PRIMARY,
+        font=(Theme.FONT_FAMILY, scale_dim(11), 'bold')
     ).pack(side="left", padx=(0, 15))
 
     takings_period_var = tk.StringVar(value="today")
     for text, value in periods:
-        tk.Radiobutton(
+        ctk.CTkRadioButton(
             takings_date_inner,
             text=text,
             variable=takings_period_var,
             value=value,
-            bg=Theme.BG_FRAME,
-            fg=Theme.TEXT_PRIMARY,
-            selectcolor=Theme.BG_BUTTON,
-            activebackground=Theme.BG_FRAME,
-            activeforeground=Theme.TEXT_PRIMARY,
-            font=(Theme.FONT_FAMILY, 10)
+            fg_color=Theme.ACCENT_GOLD,
+            hover_color=Theme.ACCENT_GOLD_DARK,
+            text_color=Theme.TEXT_PRIMARY,
+            font=(Theme.FONT_FAMILY, scale_dim(10))
         ).pack(side="left", padx=10)
 
-    takings_columns_frame = tk.Frame(takings_tab, bg=Theme.BG_DARK)
+    takings_columns_frame = ctk.CTkFrame(takings_tab, fg_color=Theme.BG_DARK, corner_radius=0)
     takings_columns_frame.pack(fill="both", expand=True, padx=20, pady=(0, 15))
 
     takings_labels = {}
 
     def _takings_column(title):
-        col = tk.Frame(takings_columns_frame, **Theme.frame_style())
+        col = ctk.CTkFrame(takings_columns_frame, **Theme.ctk_frame_style())
         col.pack(side="left", fill="both", expand=True, padx=10)
 
-        tk.Label(
-            col, text=title, bg=Theme.BG_FRAME, fg=Theme.ACCENT_GOLD,
-            font=(Theme.FONT_FAMILY, 13, "bold")
+        ctk.CTkLabel(
+            col, text=title, fg_color="transparent", text_color=Theme.ACCENT_GOLD,
+            font=(Theme.FONT_FAMILY, scale_dim(13), "bold")
         ).pack(pady=(15, 10))
 
         for stat_name in ("Sales", "Refunds", "Balance"):
-            row = tk.Frame(col, bg=Theme.BG_BUTTON, relief="flat", bd=0)
+            row = ctk.CTkFrame(col, fg_color=Theme.BG_BUTTON, corner_radius=8)
             row.pack(fill="x", padx=15, pady=6)
-            tk.Label(
-                row, text=stat_name, bg=Theme.BG_BUTTON, fg=Theme.TEXT_SECONDARY,
-                font=(Theme.FONT_FAMILY, 10)
+            ctk.CTkLabel(
+                row, text=stat_name, fg_color="transparent", text_color=Theme.TEXT_SECONDARY,
+                font=(Theme.FONT_FAMILY, scale_dim(10))
             ).pack(anchor="w", padx=15, pady=(10, 2))
-            value_label = tk.Label(
-                row, text="--", bg=Theme.BG_BUTTON, fg=Theme.TEXT_PRIMARY,
-                font=(Theme.FONT_FAMILY, 14, "bold")
+            value_label = ctk.CTkLabel(
+                row, text="--", fg_color="transparent", text_color=Theme.TEXT_PRIMARY,
+                font=(Theme.FONT_FAMILY, scale_dim(14), "bold")
             )
             value_label.pack(anchor="w", padx=15, pady=(0, 10))
             takings_labels[f"{title} {stat_name}"] = value_label
@@ -530,39 +531,38 @@ def open_reports_window(current_user):
 
                     net_balance = sales_total - refund_total
 
-                    takings_labels[f"{title} Sales"].config(text=f"{sales_count} orders / ${sales_total:.2f}")
-                    takings_labels[f"{title} Refunds"].config(text=f"{refund_count} orders / ${refund_total:.2f}")
-                    takings_labels[f"{title} Balance"].config(text=f"${net_balance:.2f}")
+                    takings_labels[f"{title} Sales"].configure(text=f"{sales_count} orders / ${sales_total:.2f}")
+                    takings_labels[f"{title} Refunds"].configure(text=f"{refund_count} orders / ${refund_total:.2f}")
+                    takings_labels[f"{title} Balance"].configure(text=f"${net_balance:.2f}")
             conn.close()
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load takings: {str(e)}")
 
-    takings_load_btn = tk.Button(
+    takings_load_btn = ctk.CTkButton(
         takings_date_inner,
         text="Load Takings",
         command=load_takings,
-        **Theme.button_style(),
-        width=14
+        **Theme.ctk_button_style(scale=scale),
+        width=scale_dim(160)
     )
     takings_load_btn.pack(side="left", padx=20)
-    bind_hover_effect(takings_load_btn)
 
     # Trending Tab
     trending_tab = tk.Frame(notebook, bg=Theme.BG_DARK)
     notebook.add(trending_tab, text="Trending")
 
-    tk.Label(
+    ctk.CTkLabel(
         trending_tab,
         text="Trending — Items Most Sold",
-        bg=Theme.BG_DARK,
-        fg=Theme.ACCENT_GOLD,
-        font=(Theme.FONT_FAMILY, 14, "bold")
+        fg_color="transparent",
+        text_color=Theme.ACCENT_GOLD,
+        font=(Theme.FONT_FAMILY, scale_dim(14), "bold")
     ).pack(pady=15)
 
-    trending_tree_container = tk.Frame(trending_tab, **Theme.frame_style())
+    trending_tree_container = ctk.CTkFrame(trending_tab, **Theme.ctk_frame_style())
     trending_tree_container.pack(fill="both", expand=True, padx=20, pady=(0, 10))
 
-    trending_tree_frame = tk.Frame(trending_tree_container, bg=Theme.BG_FRAME)
+    trending_tree_frame = ctk.CTkFrame(trending_tree_container, fg_color=Theme.BG_FRAME, corner_radius=0)
     trending_tree_frame.pack(fill="both", expand=True, padx=15, pady=15)
 
     trending_scroll = ttk.Scrollbar(trending_tree_frame)
@@ -630,9 +630,9 @@ def open_reports_window(current_user):
             ))
 
         page_number = (trending_page["offset"] // TRENDING_PAGE_SIZE) + 1
-        trending_page_label.config(text=f"Page {page_number}")
-        trending_prev_btn.config(state="normal" if trending_page["offset"] > 0 else "disabled")
-        trending_next_btn.config(state="normal" if has_next else "disabled")
+        trending_page_label.configure(text=f"Page {page_number}")
+        trending_prev_btn.configure(state="normal" if trending_page["offset"] > 0 else "disabled")
+        trending_next_btn.configure(state="normal" if has_next else "disabled")
 
     def trending_prev_page():
         trending_page["offset"] = max(0, trending_page["offset"] - TRENDING_PAGE_SIZE)
@@ -642,70 +642,68 @@ def open_reports_window(current_user):
         trending_page["offset"] += TRENDING_PAGE_SIZE
         load_trending()
 
-    trending_nav_frame = tk.Frame(trending_tab, bg=Theme.BG_DARK)
+    trending_nav_frame = ctk.CTkFrame(trending_tab, fg_color=Theme.BG_DARK, corner_radius=0)
     trending_nav_frame.pack(pady=(0, 15))
 
-    trending_prev_btn = tk.Button(
+    trending_prev_btn = ctk.CTkButton(
         trending_nav_frame, text="< Prev", command=trending_prev_page,
-        **Theme.button_style(), width=10
+        **Theme.ctk_button_style(scale=scale), width=scale_dim(100)
     )
     trending_prev_btn.pack(side="left", padx=5)
-    bind_hover_effect(trending_prev_btn)
 
-    trending_page_label = tk.Label(
-        trending_nav_frame, text="Page 1", bg=Theme.BG_DARK, fg=Theme.TEXT_PRIMARY,
-        font=(Theme.FONT_FAMILY, 11, "bold")
+    trending_page_label = ctk.CTkLabel(
+        trending_nav_frame, text="Page 1", fg_color="transparent", text_color=Theme.TEXT_PRIMARY,
+        font=(Theme.FONT_FAMILY, scale_dim(11), "bold")
     )
     trending_page_label.pack(side="left", padx=15)
 
-    trending_next_btn = tk.Button(
+    trending_next_btn = ctk.CTkButton(
         trending_nav_frame, text="Next >", command=trending_next_page,
-        **Theme.button_style(), width=10
+        **Theme.ctk_button_style(scale=scale), width=scale_dim(100)
     )
     trending_next_btn.pack(side="left", padx=5)
-    bind_hover_effect(trending_next_btn)
 
     # Inventory Report Tab
     inventory_tab = tk.Frame(notebook, bg=Theme.BG_DARK)
     notebook.add(inventory_tab, text="Inventory Report")
 
-    inv_header = tk.Label(
+    inv_header = ctk.CTkLabel(
         inventory_tab,
         text="Inventory Summary",
-        bg=Theme.BG_DARK,
-        fg=Theme.ACCENT_GOLD,
-        font=(Theme.FONT_FAMILY, 14, "bold")
+        fg_color="transparent",
+        text_color=Theme.ACCENT_GOLD,
+        font=(Theme.FONT_FAMILY, scale_dim(14), "bold")
     )
     inv_header.pack(pady=15)
 
     # Inventory stats frame
-    stats_outer = tk.Frame(inventory_tab, **Theme.frame_style())
+    stats_outer = ctk.CTkFrame(inventory_tab, **Theme.ctk_frame_style())
     stats_outer.pack(pady=10, fill="x", padx=20)
 
-    stats_frame = tk.Frame(stats_outer, bg=Theme.BG_FRAME)
+    stats_frame = ctk.CTkFrame(stats_outer, fg_color="transparent")
     stats_frame.pack(padx=20, pady=20)
 
     stat_labels = {}
     stat_names = ["Total Items", "Total Stock", "Low Stock", "Out of Stock", "Total Value"]
-    
+
     for i, name in enumerate(stat_names):
-        frame = tk.Frame(stats_frame, bg=Theme.BG_BUTTON, relief="flat", bd=0)
+        frame = ctk.CTkFrame(stats_frame, fg_color=Theme.BG_BUTTON, corner_radius=8)
         frame.pack(side="left", padx=15, pady=5)
-        
-        tk.Label(
+
+        ctk.CTkLabel(
             frame,
             text=name,
-            bg=Theme.BG_BUTTON,
-            fg=Theme.TEXT_SECONDARY,
-            font=(Theme.FONT_FAMILY, 10)
+            fg_color="transparent",
+            text_color=Theme.TEXT_SECONDARY,
+            font=(Theme.FONT_FAMILY, scale_dim(10))
         ).pack(pady=(15, 5), padx=20)
-        
-        label = tk.Label(
+
+        label = ctk.CTkLabel(
             frame,
             text="0",
-            bg=Theme.BG_BUTTON,
-            fg=Theme.ACCENT_GOLD,
-            font=(Theme.FONT_FAMILY, 16, "bold")
+            fg_color="transparent",
+            text_color=Theme.ACCENT_GOLD,
+            font=(Theme.FONT_FAMILY, scale_dim(16), "bold")
         )
         label.pack(pady=(5, 15), padx=20)
         stat_labels[name] = label
@@ -716,11 +714,11 @@ def open_reports_window(current_user):
             with conn.cursor() as cur:
                 cur.execute("SELECT COUNT(*) FROM items")
                 total_items = cur.fetchone()[0]
-                stat_labels["Total Items"].config(text=str(total_items))
+                stat_labels["Total Items"].configure(text=str(total_items))
 
                 cur.execute("SELECT COALESCE(SUM(quantity), 0) FROM inventory")
                 total_stock = cur.fetchone()[0]
-                stat_labels["Total Stock"].config(text=str(total_stock))
+                stat_labels["Total Stock"].configure(text=str(total_stock))
 
                 cur.execute("""
                     SELECT COUNT(*) FROM inventory inv
@@ -728,11 +726,11 @@ def open_reports_window(current_user):
                     WHERE inv.quantity > 0 AND inv.quantity <= COALESCE(NULLIF(i.reorder_pt, 0), 5)
                 """)
                 low_stock = cur.fetchone()[0]
-                stat_labels["Low Stock"].config(text=str(low_stock))
+                stat_labels["Low Stock"].configure(text=str(low_stock))
 
                 cur.execute("SELECT COUNT(*) FROM inventory WHERE quantity = 0")
                 out_stock = cur.fetchone()[0]
-                stat_labels["Out of Stock"].config(text=str(out_stock))
+                stat_labels["Out of Stock"].configure(text=str(out_stock))
 
                 cur.execute("""
                     SELECT COALESCE(SUM(i.cost * inv.quantity), 0)
@@ -740,25 +738,25 @@ def open_reports_window(current_user):
                     JOIN inventory inv ON i.item_id = inv.item_id
                 """)
                 total_value = cur.fetchone()[0]
-                stat_labels["Total Value"].config(text=f"${total_value:.2f}")
+                stat_labels["Total Value"].configure(text=f"${total_value:.2f}")
 
             conn.close()
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load inventory stats: {str(e)}")
 
     # Category section
-    tk.Label(
+    ctk.CTkLabel(
         inventory_tab,
         text="Product Categories",
-        bg=Theme.BG_DARK,
-        fg=Theme.TEXT_PRIMARY,
-        font=(Theme.FONT_FAMILY, 12, "bold")
+        fg_color="transparent",
+        text_color=Theme.TEXT_PRIMARY,
+        font=(Theme.FONT_FAMILY, scale_dim(12), "bold")
     ).pack(pady=(20, 10))
 
-    cat_container = tk.Frame(inventory_tab, **Theme.frame_style())
+    cat_container = ctk.CTkFrame(inventory_tab, **Theme.ctk_frame_style())
     cat_container.pack(fill="both", expand=True, padx=20, pady=(0, 15))
 
-    cat_tree_frame = tk.Frame(cat_container, bg=Theme.BG_FRAME)
+    cat_tree_frame = ctk.CTkFrame(cat_container, fg_color=Theme.BG_FRAME, corner_radius=0)
     cat_tree_frame.pack(fill="both", expand=True, padx=15, pady=15)
 
     cat_scroll = ttk.Scrollbar(cat_tree_frame)
@@ -787,7 +785,7 @@ def open_reports_window(current_user):
             conn = get_conn()
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT 
+                    SELECT
                         COALESCE(i.type, 'Unknown') as type,
                         COUNT(*) as count,
                         COALESCE(SUM(inv.quantity), 0) as total_stock,
@@ -797,7 +795,7 @@ def open_reports_window(current_user):
                     GROUP BY i.type
                     ORDER BY count DESC
                 """)
-                
+
                 for row in cur.fetchall():
                     cat_tree.insert("", "end", values=(
                         row[0],
@@ -809,15 +807,14 @@ def open_reports_window(current_user):
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load category stats: {str(e)}")
 
-    refresh_inv_btn = tk.Button(
+    refresh_inv_btn = ctk.CTkButton(
         inventory_tab,
         text="Refresh Statistics",
         command=lambda: (load_inventory_stats(), load_category_stats()),
-        **Theme.button_style(),
-        width=18
+        **Theme.ctk_button_style(scale=scale),
+        width=scale_dim(180)
     )
     refresh_inv_btn.pack(pady=15)
-    bind_hover_effect(refresh_inv_btn)
 
     # Day Report Tab — a single formatted text report for one business date,
     # mirroring a real printed end-of-day report. Several lines from the
@@ -829,33 +826,33 @@ def open_reports_window(current_user):
     day_report_tab = tk.Frame(notebook, bg=Theme.BG_DARK)
     notebook.add(day_report_tab, text="Day Report")
 
-    tk.Label(
+    ctk.CTkLabel(
         day_report_tab,
         text="Day Report",
-        bg=Theme.BG_DARK,
-        fg=Theme.ACCENT_GOLD,
-        font=(Theme.FONT_FAMILY, 14, "bold")
+        fg_color="transparent",
+        text_color=Theme.ACCENT_GOLD,
+        font=(Theme.FONT_FAMILY, scale_dim(14), "bold")
     ).pack(pady=15)
 
-    day_date_frame = tk.Frame(day_report_tab, **Theme.frame_style())
+    day_date_frame = ctk.CTkFrame(day_report_tab, **Theme.ctk_frame_style())
     day_date_frame.pack(pady=(0, 15), padx=20, fill="x")
 
-    day_date_inner = tk.Frame(day_date_frame, bg=Theme.BG_FRAME)
+    day_date_inner = ctk.CTkFrame(day_date_frame, fg_color="transparent")
     day_date_inner.pack(padx=20, pady=15)
 
-    tk.Label(
+    ctk.CTkLabel(
         day_date_inner,
         text="Business Date (YYYY-MM-DD):",
-        bg=Theme.BG_FRAME,
-        fg=Theme.TEXT_PRIMARY,
-        font=(Theme.FONT_FAMILY, 11, 'bold')
+        fg_color="transparent",
+        text_color=Theme.TEXT_PRIMARY,
+        font=(Theme.FONT_FAMILY, scale_dim(11), 'bold')
     ).pack(side="left", padx=(0, 10))
 
     day_date_var = tk.StringVar(value=datetime.now().strftime("%Y-%m-%d"))
-    day_date_entry = tk.Entry(day_date_inner, textvariable=day_date_var, **Theme.entry_style(), width=14)
-    day_date_entry.pack(side="left", ipady=6)
+    day_date_entry = ctk.CTkEntry(day_date_inner, textvariable=day_date_var, width=scale_dim(140), **Theme.ctk_entry_style(scale=scale))
+    day_date_entry.pack(side="left")
 
-    day_text_container = tk.Frame(day_report_tab, **Theme.frame_style())
+    day_text_container = ctk.CTkFrame(day_report_tab, **Theme.ctk_frame_style())
     day_text_container.pack(fill="both", expand=True, padx=20, pady=(0, 15))
 
     day_text_scroll = ttk.Scrollbar(day_text_container)
@@ -1022,28 +1019,27 @@ def open_reports_window(current_user):
         day_report_text.insert("1.0", "\n".join(lines))
         day_report_text.config(state="disabled")
 
-    day_generate_btn = tk.Button(
+    day_generate_btn = ctk.CTkButton(
         day_date_inner,
         text="Generate Report",
         command=generate_day_report,
-        **Theme.button_style(),
-        width=16
+        **Theme.ctk_button_style(scale=scale),
+        width=scale_dim(160)
     )
     day_generate_btn.pack(side="left", padx=15)
-    bind_hover_effect(day_generate_btn)
 
     # Back button at bottom
-    back_btn = tk.Button(
+    back_btn = ctk.CTkButton(
         win,
         text="← Back to Dashboard",
         command=win.destroy,
-        bg="#DC3545",
-        fg=Theme.TEXT_PRIMARY,
-        font=(Theme.FONT_FAMILY, Theme.FONT_SIZE_NORMAL, "bold"),
-        relief="flat",
-        width=20,
-        activebackground="#C82333",
-        cursor='hand2'
+        fg_color="#DC3545",
+        text_color=Theme.TEXT_PRIMARY,
+        hover_color="#C82333",
+        font=(Theme.FONT_FAMILY, scale_dim(Theme.FONT_SIZE_NORMAL), "bold"),
+        corner_radius=8,
+        border_width=0,
+        width=scale_dim(200),
     )
     back_btn.pack(pady=(0, 20))
 
@@ -1052,3 +1048,5 @@ def open_reports_window(current_user):
     load_category_stats()
     load_takings()
     load_trending()
+
+    return win

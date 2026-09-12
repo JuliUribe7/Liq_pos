@@ -2,25 +2,53 @@
 import os
 import tkinter as tk
 from tkinter import ttk, messagebox
+import customtkinter as ctk
 from datetime import datetime
 from db import get_conn
-from theme import Theme, bind_hover_effect
+from theme import Theme
 from receipt import print_receipt
+from customer_display import is_enabled as customer_display_enabled, open_customer_display
+from ui_settings import scale_geometry, scale_dim, position_main_window, get_ui_scale
 
 def open_sales_window(current_user: str):
-    win = tk.Toplevel()
+    scale = get_ui_scale()
+    win = ctk.CTkToplevel()
     win.title("Sales/POS")
-    win.geometry("1400x850")
-    win.config(**Theme.window_style())
+    win.geometry(scale_geometry(1400, 850))
+    win.configure(**Theme.ctk_window_style())
+    win.after(60, lambda: position_main_window(win))
 
-    # Configure ttk style
+    customer_display = None
+    if customer_display_enabled():
+        customer_display = open_customer_display(win)
+        if customer_display is None:
+            # parent=win keeps this properly stacked above the Sales window
+            # even if the deferred position_main_window() above fires (and
+            # maximizes win) while this dialog's own internal wait loop is
+            # pumping events — without it, an unparented dialog could end up
+            # visually buried under the newly-maximized window, making Sales
+            # look like it "won't show" until the hidden dialog is dismissed.
+            messagebox.showinfo(
+                "Customer Display",
+                "Customer Display is enabled in Settings, but no second monitor was detected.",
+                parent=win
+            )
+
+    # Configure ttk style — Treeview has no CTk equivalent, so it stays
+    # ttk, styled to blend in with the CTk widgets around it. Its font
+    # point sizes are scaled by the 'tk scaling' pin (set once in
+    # login_gui.py) automatically, unlike CTk fonts which need scale_dim()
+    # applied explicitly — rowheight is a literal pixel value so it does
+    # need that here.
     style = ttk.Style()
     style.theme_use('clam')
     style.configure("Treeview",
                     background=Theme.BG_BUTTON,
                     foreground=Theme.TEXT_PRIMARY,
                     fieldbackground=Theme.BG_BUTTON,
-                    borderwidth=0)
+                    borderwidth=0,
+                    font=(Theme.FONT_FAMILY, Theme.FONT_SIZE_NORMAL),
+                    rowheight=scale_dim(30))
     style.configure("Treeview.Heading",
                     background=Theme.BG_FRAME,
                     foreground=Theme.ACCENT_GOLD,
@@ -29,13 +57,13 @@ def open_sales_window(current_user: str):
     style.map('Treeview', background=[('selected', Theme.ACCENT_GOLD)])
 
     # Header
-    header_frame = tk.Frame(win, bg=Theme.BG_DARK)
+    header_frame = ctk.CTkFrame(win, fg_color=Theme.BG_DARK, corner_radius=0)
     header_frame.pack(fill='x', pady=(10, 5))
 
-    tk.Label(
+    ctk.CTkLabel(
         header_frame,
         text=f"Cashier: {current_user}",
-        **Theme.secondary_label_style()
+        **Theme.ctk_secondary_label_style(scale=scale)
     ).pack()
 
     # Alcohol/tobacco age cutoff — recomputed from today's date every time the
@@ -47,43 +75,43 @@ def open_sales_window(current_user: str):
         # today is Feb 29 and (today.year - 21) isn't a leap year
         cutoff_date = today.replace(month=2, day=28, year=today.year - 21)
 
-    tk.Label(
+    ctk.CTkLabel(
         header_frame,
         text=f"Must be born on or before {cutoff_date.strftime('%B %d, %Y')} to purchase alcohol/tobacco",
-        bg=Theme.BG_DARK,
-        fg=Theme.TEXT_WARNING,
-        font=(Theme.FONT_FAMILY, Theme.FONT_SIZE_SMALL, "bold")
+        fg_color="transparent",
+        text_color=Theme.TEXT_WARNING,
+        font=(Theme.FONT_FAMILY, scale_dim(Theme.FONT_SIZE_SMALL), "bold")
     ).pack(pady=(5, 0))
 
     # Main container
-    main_frame = tk.Frame(win, bg=Theme.BG_DARK)
+    main_frame = ctk.CTkFrame(win, fg_color=Theme.BG_DARK, corner_radius=0)
     main_frame.pack(fill="both", expand=True, padx=20, pady=10)
 
     # ---- Bottom strip (packed first so the cart above it gets the leftover
     # space) — scan/buttons on the left, totals/checkout on the right ----
-    bottom_frame = tk.Frame(main_frame, bg=Theme.BG_DARK)
+    bottom_frame = ctk.CTkFrame(main_frame, fg_color=Theme.BG_DARK, corner_radius=0)
     bottom_frame.pack(side="bottom", fill="x", pady=(10, 0))
 
-    left_panel = tk.Frame(bottom_frame, **Theme.frame_style())
+    left_panel = ctk.CTkFrame(bottom_frame, **Theme.ctk_frame_style())
     left_panel.pack(side="left", fill="both", expand=True, padx=(0, 10))
 
-    right_panel = tk.Frame(bottom_frame, **Theme.frame_style(), width=380)
+    right_panel = ctk.CTkFrame(bottom_frame, width=scale_dim(380), **Theme.ctk_frame_style())
     right_panel.pack(side="right", fill="y")
     right_panel.pack_propagate(False)
 
     # ---- Shopping cart — the main, wide focus of the screen ----
-    cart_panel = tk.Frame(main_frame, **Theme.frame_style())
+    cart_panel = ctk.CTkFrame(main_frame, **Theme.ctk_frame_style())
     cart_panel.pack(side="top", fill="both", expand=True)
 
-    tk.Label(
+    ctk.CTkLabel(
         cart_panel,
         text="Shopping Cart",
-        bg=Theme.BG_FRAME,
-        fg=Theme.ACCENT_GOLD,
-        font=(Theme.FONT_FAMILY, 14, "bold")
+        fg_color="transparent",
+        text_color=Theme.ACCENT_GOLD,
+        font=(Theme.FONT_FAMILY, scale_dim(14), "bold")
     ).pack(pady=(15, 10))
 
-    cart_frame = tk.Frame(cart_panel, bg=Theme.BG_FRAME)
+    cart_frame = ctk.CTkFrame(cart_panel, fg_color=Theme.BG_FRAME, corner_radius=0)
     cart_frame.pack(fill="both", expand=True, padx=15, pady=(0, 15))
 
     cart_scroll = ttk.Scrollbar(cart_frame)
@@ -116,34 +144,40 @@ def open_sales_window(current_user: str):
     discount_value = 0.0
     status_clear_id = None
 
-    status_label = tk.Label(
+    status_label = ctk.CTkLabel(
         left_panel,
         text="",
-        bg=Theme.BG_FRAME,
-        fg=Theme.TEXT_WARNING,
-        font=(Theme.FONT_FAMILY, Theme.FONT_SIZE_SMALL),
+        fg_color="transparent",
+        text_color=Theme.TEXT_WARNING,
+        font=(Theme.FONT_FAMILY, scale_dim(Theme.FONT_SIZE_SMALL)),
         anchor="w",
     )
 
-    # Order breakdown section
-    total_frame = tk.Frame(right_panel, bg=Theme.BG_FRAME)
-    total_frame.pack(fill="both", expand=True, padx=15, pady=15)
+    # Order breakdown section. Padding here is intentionally tight (not
+    # just cosmetic): on a 1366x768 screen — the real target resolution for
+    # this register — this column has to fit 5 breakdown rows, a divider,
+    # the Total line, and the CHECKOUT button in well under 300px of actual
+    # height. Looser padding previously pushed the combined content past
+    # what was available, and Tk responds to that by dropping the
+    # last-packed widget (CHECKOUT) entirely rather than shrinking it.
+    total_frame = ctk.CTkFrame(right_panel, fg_color=Theme.BG_FRAME, corner_radius=0)
+    total_frame.pack(fill="both", expand=True, padx=15, pady=(8, 4))
 
-    breakdown_frame = tk.Frame(total_frame, bg=Theme.BG_FRAME)
+    breakdown_frame = ctk.CTkFrame(total_frame, fg_color=Theme.BG_FRAME, corner_radius=0)
     breakdown_frame.pack(fill="x")
     breakdown_frame.columnconfigure(0, weight=1)
     breakdown_frame.columnconfigure(1, weight=0)
 
     def _breakdown_row(row, label_text):
-        tk.Label(
-            breakdown_frame, text=label_text, bg=Theme.BG_FRAME,
-            fg=Theme.TEXT_SECONDARY, font=(Theme.FONT_FAMILY, Theme.FONT_SIZE_SMALL)
-        ).grid(row=row, column=0, sticky="w", pady=2)
-        value_label = tk.Label(
-            breakdown_frame, text="$0.00", bg=Theme.BG_FRAME,
-            fg=Theme.TEXT_PRIMARY, font=(Theme.FONT_FAMILY, Theme.FONT_SIZE_SMALL, "bold")
+        ctk.CTkLabel(
+            breakdown_frame, text=label_text, fg_color="transparent",
+            text_color=Theme.TEXT_SECONDARY, font=(Theme.FONT_FAMILY, scale_dim(Theme.FONT_SIZE_NORMAL))
+        ).grid(row=row, column=0, sticky="w", pady=1)
+        value_label = ctk.CTkLabel(
+            breakdown_frame, text="$0.00", fg_color="transparent",
+            text_color=Theme.TEXT_PRIMARY, font=(Theme.FONT_FAMILY, scale_dim(Theme.FONT_SIZE_NORMAL), "bold")
         )
-        value_label.grid(row=row, column=1, sticky="e", pady=2)
+        value_label.grid(row=row, column=1, sticky="e", pady=1)
         return value_label
 
     items_value_label = _breakdown_row(0, "Items")
@@ -152,14 +186,14 @@ def open_sales_window(current_user: str):
     tax_value_label = _breakdown_row(3, "Tax")
     deposit_value_label = _breakdown_row(4, "Deposit")
 
-    tk.Frame(total_frame, bg=Theme.BORDER_DEFAULT, height=1).pack(fill="x", pady=8)
+    ctk.CTkFrame(total_frame, fg_color=Theme.BORDER_DEFAULT, height=1, corner_radius=0).pack(fill="x", pady=3)
 
-    total_label = tk.Label(
+    total_label = ctk.CTkLabel(
         total_frame,
         text="Total: $0.00",
-        bg=Theme.BG_FRAME,
-        fg=Theme.ACCENT_GOLD,
-        font=(Theme.FONT_FAMILY, 18, "bold")
+        fg_color="transparent",
+        text_color=Theme.ACCENT_GOLD,
+        font=(Theme.FONT_FAMILY, scale_dim(18), "bold")
     )
     total_label.pack(pady=(0, 5))
 
@@ -213,46 +247,48 @@ def open_sales_window(current_user: str):
 
     def update_total():
         totals = calculate_totals()
-        items_value_label.config(text=str(totals['total_items']))
-        subtotal_value_label.config(text=f"${totals['subtotal']:.2f}")
-        discount_value_label.config(
+        items_value_label.configure(text=str(totals['total_items']))
+        discount_value_label.configure(
             text=f"-${totals['discount_amount']:.2f}" if totals['discount_amount'] > 0 else "$0.00"
         )
-        tax_value_label.config(text=f"${totals['tax_amount']:.2f}")
-        deposit_value_label.config(text=f"${totals['deposit_amount']:.2f}")
-        total_label.config(text=f"Total: ${totals['total']:.2f}")
+        subtotal_value_label.configure(text=f"${totals['subtotal']:.2f}")
+        tax_value_label.configure(text=f"${totals['tax_amount']:.2f}")
+        deposit_value_label.configure(text=f"${totals['deposit_amount']:.2f}")
+        total_label.configure(text=f"Total: ${totals['total']:.2f}")
+
+        if customer_display is not None:
+            customer_display['update'](cart_items, totals)
 
     def open_discount_dialog():
         nonlocal discount_type, discount_value
 
-        dialog = tk.Toplevel(win)
+        dialog = ctk.CTkToplevel(win)
         dialog.title("Apply Discount")
-        dialog.geometry("320x260")
-        dialog.config(bg=Theme.BG_FRAME)
+        dialog.geometry(scale_geometry(320, 260))
+        dialog.configure(**Theme.ctk_window_style())
         dialog.transient(win)
         dialog.grab_set()
 
-        tk.Label(
-            dialog, text="Discount Type", bg=Theme.BG_FRAME,
-            fg=Theme.TEXT_PRIMARY, font=(Theme.FONT_FAMILY, 11, "bold")
+        ctk.CTkLabel(
+            dialog, text="Discount Type", fg_color="transparent",
+            text_color=Theme.TEXT_PRIMARY, font=(Theme.FONT_FAMILY, scale_dim(11), "bold")
         ).pack(pady=(15, 5))
 
         mode_var = tk.StringVar(value=discount_type or "none")
         for label, value in [("No Discount", "none"), ("Percent Off (%)", "percent"), ("Flat Amount ($)", "flat")]:
-            tk.Radiobutton(
+            ctk.CTkRadioButton(
                 dialog, text=label, variable=mode_var, value=value,
-                bg=Theme.BG_FRAME, fg=Theme.TEXT_PRIMARY,
-                selectcolor=Theme.BG_BUTTON, activebackground=Theme.BG_FRAME,
-                font=(Theme.FONT_FAMILY, 10)
-            ).pack(anchor="w", padx=30)
+                fg_color=Theme.ACCENT_GOLD, hover_color=Theme.ACCENT_GOLD_DARK,
+                text_color=Theme.TEXT_PRIMARY, font=(Theme.FONT_FAMILY, scale_dim(10))
+            ).pack(anchor="w", padx=30, pady=2)
 
-        tk.Label(
-            dialog, text="Value:", bg=Theme.BG_FRAME,
-            fg=Theme.TEXT_PRIMARY, font=(Theme.FONT_FAMILY, 10)
+        ctk.CTkLabel(
+            dialog, text="Value:", fg_color="transparent",
+            text_color=Theme.TEXT_PRIMARY, font=(Theme.FONT_FAMILY, scale_dim(10))
         ).pack(pady=(15, 5))
 
-        value_entry = tk.Entry(dialog, **Theme.entry_style())
-        value_entry.pack(padx=30, fill="x", ipady=4)
+        value_entry = ctk.CTkEntry(dialog, **Theme.ctk_entry_style(scale=scale))
+        value_entry.pack(padx=30, fill="x")
         if discount_value:
             value_entry.insert(0, str(discount_value))
 
@@ -276,23 +312,23 @@ def open_sales_window(current_user: str):
             update_total()
             dialog.destroy()
 
-        btn_frame = tk.Frame(dialog, bg=Theme.BG_FRAME)
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
         btn_frame.pack(pady=20)
-        tk.Button(
+        ctk.CTkButton(
             btn_frame, text="Apply", command=apply_discount,
-            **Theme.button_style(), width=10
+            **Theme.ctk_button_style(scale=scale), width=scale_dim(100)
         ).pack(side="left", padx=5)
-        tk.Button(
+        ctk.CTkButton(
             btn_frame, text="Cancel", command=dialog.destroy,
-            **Theme.button_style(), width=10
+            **Theme.ctk_button_style(scale=scale), width=scale_dim(100)
         ).pack(side="left", padx=5)
 
     def show_low_stock_warning(brand):
         nonlocal status_clear_id
         if status_clear_id is not None:
             win.after_cancel(status_clear_id)
-        status_label.config(text=f"Low stock: {brand}", fg=Theme.TEXT_WARNING)
-        status_clear_id = win.after(3000, lambda: status_label.config(text="") if win.winfo_exists() else None)
+        status_label.configure(text=f"Low stock: {brand}", text_color=Theme.TEXT_WARNING)
+        status_clear_id = win.after(3000, lambda: status_label.configure(text="") if win.winfo_exists() else None)
 
     def add_to_cart(item_id, brand, size, price, stock, sales_tax=True, discount_ok=True,
                      deposit_enabled=False, deposit_amount=0.0, barcode=None):
@@ -342,26 +378,26 @@ def open_sales_window(current_user: str):
         return True
 
     def add_custom_item():
-        dialog = tk.Toplevel(win)
+        dialog = ctk.CTkToplevel(win)
         dialog.title("Add Custom Item")
-        dialog.geometry("320x220")
-        dialog.config(bg=Theme.BG_FRAME)
+        dialog.geometry(scale_geometry(320, 220))
+        dialog.configure(**Theme.ctk_window_style())
         dialog.transient(win)
         dialog.grab_set()
 
-        tk.Label(
-            dialog, text="Item Name (e.g. Bag)", bg=Theme.BG_FRAME,
-            fg=Theme.TEXT_PRIMARY, font=(Theme.FONT_FAMILY, 10, "bold")
+        ctk.CTkLabel(
+            dialog, text="Item Name (e.g. Bag)", fg_color="transparent",
+            text_color=Theme.TEXT_PRIMARY, font=(Theme.FONT_FAMILY, scale_dim(10), "bold")
         ).pack(pady=(15, 5))
-        name_entry = tk.Entry(dialog, **Theme.entry_style())
-        name_entry.pack(padx=30, fill="x", ipady=4)
+        name_entry = ctk.CTkEntry(dialog, **Theme.ctk_entry_style(scale=scale))
+        name_entry.pack(padx=30, fill="x")
 
-        tk.Label(
-            dialog, text="Price ($)", bg=Theme.BG_FRAME,
-            fg=Theme.TEXT_PRIMARY, font=(Theme.FONT_FAMILY, 10, "bold")
+        ctk.CTkLabel(
+            dialog, text="Price ($)", fg_color="transparent",
+            text_color=Theme.TEXT_PRIMARY, font=(Theme.FONT_FAMILY, scale_dim(10), "bold")
         ).pack(pady=(15, 5))
-        price_entry = tk.Entry(dialog, **Theme.entry_style())
-        price_entry.pack(padx=30, fill="x", ipady=4)
+        price_entry = ctk.CTkEntry(dialog, **Theme.ctk_entry_style(scale=scale))
+        price_entry.pack(padx=30, fill="x")
 
         def confirm_add():
             name = name_entry.get().strip()
@@ -399,15 +435,15 @@ def open_sales_window(current_user: str):
             update_total()
             dialog.destroy()
 
-        btn_frame = tk.Frame(dialog, bg=Theme.BG_FRAME)
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
         btn_frame.pack(pady=15)
-        tk.Button(
+        ctk.CTkButton(
             btn_frame, text="Add", command=confirm_add,
-            **Theme.button_style(), width=10
+            **Theme.ctk_button_style(scale=scale), width=scale_dim(100)
         ).pack(side="left", padx=5)
-        tk.Button(
+        ctk.CTkButton(
             btn_frame, text="Cancel", command=dialog.destroy,
-            **Theme.button_style(), width=10
+            **Theme.ctk_button_style(scale=scale), width=scale_dim(100)
         ).pack(side="left", padx=5)
 
     def remove_from_cart():
@@ -507,27 +543,27 @@ def open_sales_window(current_user: str):
 
         totals = calculate_totals()
 
-        dialog = tk.Toplevel(win)
+        dialog = ctk.CTkToplevel(win)
         dialog.title("Payment")
-        dialog.geometry("380x540")
-        dialog.config(bg=Theme.BG_FRAME)
+        dialog.geometry(scale_geometry(380, 540))
+        dialog.configure(**Theme.ctk_window_style())
         dialog.transient(win)
         dialog.grab_set()
 
-        tk.Label(
-            dialog, text="Total Due", bg=Theme.BG_FRAME,
-            fg=Theme.TEXT_SECONDARY, font=(Theme.FONT_FAMILY, 11, "bold")
+        ctk.CTkLabel(
+            dialog, text="Total Due", fg_color="transparent",
+            text_color=Theme.TEXT_SECONDARY, font=(Theme.FONT_FAMILY, scale_dim(11), "bold")
         ).pack(pady=(15, 0))
 
-        tk.Label(
-            dialog, text=f"${totals['total']:.2f}", bg=Theme.BG_FRAME,
-            fg=Theme.ACCENT_GOLD, font=(Theme.FONT_FAMILY, 26, "bold")
+        ctk.CTkLabel(
+            dialog, text=f"${totals['total']:.2f}", fg_color="transparent",
+            text_color=Theme.ACCENT_GOLD, font=(Theme.FONT_FAMILY, scale_dim(26), "bold")
         ).pack(pady=(0, 15))
 
-        method_frame = tk.Frame(dialog, bg=Theme.BG_FRAME)
+        method_frame = ctk.CTkFrame(dialog, fg_color="transparent")
         method_frame.pack(fill="x", padx=20)
 
-        content_frame = tk.Frame(dialog, bg=Theme.BG_FRAME)
+        content_frame = ctk.CTkFrame(dialog, fg_color="transparent")
         content_frame.pack(fill="both", expand=True, padx=20, pady=15)
 
         def clear_content():
@@ -539,25 +575,25 @@ def open_sales_window(current_user: str):
                 dialog.destroy()
 
         def show_cash_panel():
-            btn_cash.config(bg=Theme.ACCENT_GOLD, fg=Theme.TEXT_DARK)
-            btn_card.config(bg=Theme.BG_BUTTON, fg=Theme.TEXT_PRIMARY)
+            btn_cash.configure(fg_color=Theme.ACCENT_GOLD, text_color=Theme.TEXT_DARK)
+            btn_card.configure(fg_color=Theme.BG_BUTTON, text_color=Theme.TEXT_PRIMARY)
             clear_content()
 
-            tk.Label(
-                content_frame, text="Amount Tendered", bg=Theme.BG_FRAME,
-                fg=Theme.TEXT_PRIMARY, font=(Theme.FONT_FAMILY, 10, "bold")
+            ctk.CTkLabel(
+                content_frame, text="Amount Tendered", fg_color="transparent",
+                text_color=Theme.TEXT_PRIMARY, font=(Theme.FONT_FAMILY, scale_dim(10), "bold")
             ).pack(anchor="w")
 
             tendered_var = tk.StringVar(value="0.00")
-            tendered_entry = tk.Entry(content_frame, textvariable=tendered_var, **Theme.entry_style())
-            tendered_entry.pack(fill="x", pady=(5, 10), ipady=6)
+            tendered_entry = ctk.CTkEntry(content_frame, textvariable=tendered_var, **Theme.ctk_entry_style(scale=scale))
+            tendered_entry.pack(fill="x", pady=(5, 10))
 
-            quick_frame = tk.Frame(content_frame, bg=Theme.BG_FRAME)
+            quick_frame = ctk.CTkFrame(content_frame, fg_color="transparent")
             quick_frame.pack(fill="x", pady=(0, 10))
 
-            balance_label = tk.Label(
-                content_frame, text="", bg=Theme.BG_FRAME,
-                font=(Theme.FONT_FAMILY, 14, "bold")
+            balance_label = ctk.CTkLabel(
+                content_frame, text="", fg_color="transparent",
+                font=(Theme.FONT_FAMILY, scale_dim(14), "bold")
             )
 
             def refresh_balance(*_):
@@ -567,9 +603,9 @@ def open_sales_window(current_user: str):
                     tendered = 0.0
                 diff = tendered - totals['total']
                 if diff >= 0:
-                    balance_label.config(text=f"Change Due: ${diff:.2f}", fg=Theme.TEXT_SUCCESS)
+                    balance_label.configure(text=f"Change Due: ${diff:.2f}", text_color=Theme.TEXT_SUCCESS)
                 else:
-                    balance_label.config(text=f"Balance Due: ${-diff:.2f}", fg=Theme.TEXT_WARNING)
+                    balance_label.configure(text=f"Balance Due: ${-diff:.2f}", text_color=Theme.TEXT_WARNING)
 
             def add_bill(amount):
                 try:
@@ -579,20 +615,18 @@ def open_sales_window(current_user: str):
                 tendered_var.set(f"{current + amount:.2f}")
 
             for i, amount in enumerate([1, 5, 10, 20, 50, 100]):
-                b = tk.Button(
+                b = ctk.CTkButton(
                     quick_frame, text=f"${amount}", command=lambda a=amount: add_bill(a),
-                    **Theme.button_style(), width=6
+                    **Theme.ctk_button_style(scale=scale), width=scale_dim(70)
                 )
                 b.grid(row=i // 3, column=i % 3, padx=3, pady=3)
-                bind_hover_effect(b)
 
-            btn_reset = tk.Button(
+            btn_reset = ctk.CTkButton(
                 content_frame, text="Clear Tendered",
                 command=lambda: tendered_var.set("0.00"),
-                **Theme.button_style()
+                **Theme.ctk_button_style(scale=scale)
             )
             btn_reset.pack(fill="x", pady=(0, 10))
-            bind_hover_effect(btn_reset)
 
             balance_label.pack(pady=(0, 15))
             tendered_var.trace_add("write", refresh_balance)
@@ -609,40 +643,40 @@ def open_sales_window(current_user: str):
                     return
                 do_confirm('cash', tendered, tendered - totals['total'])
 
-            btn_confirm = tk.Button(
+            btn_confirm = ctk.CTkButton(
                 content_frame, text="Confirm Cash Sale", command=confirm_cash,
-                **Theme.primary_button_style(), height=2
+                **Theme.ctk_primary_button_style(scale=scale), height=scale_dim(40)
             )
             btn_confirm.pack(fill="x")
 
         def show_card_panel():
-            btn_card.config(bg=Theme.ACCENT_GOLD, fg=Theme.TEXT_DARK)
-            btn_cash.config(bg=Theme.BG_BUTTON, fg=Theme.TEXT_PRIMARY)
+            btn_card.configure(fg_color=Theme.ACCENT_GOLD, text_color=Theme.TEXT_DARK)
+            btn_cash.configure(fg_color=Theme.BG_BUTTON, text_color=Theme.TEXT_PRIMARY)
             clear_content()
 
-            tk.Label(
+            ctk.CTkLabel(
                 content_frame, text="Charge card for the total shown above.",
-                bg=Theme.BG_FRAME, fg=Theme.TEXT_SECONDARY,
-                font=(Theme.FONT_FAMILY, 11), wraplength=300, justify="center"
+                fg_color="transparent", text_color=Theme.TEXT_SECONDARY,
+                font=(Theme.FONT_FAMILY, scale_dim(11)), wraplength=scale_dim(300), justify="center"
             ).pack(pady=(20, 20))
 
             def confirm_card():
                 do_confirm('card', None, None)
 
-            btn_confirm = tk.Button(
+            btn_confirm = ctk.CTkButton(
                 content_frame, text="Confirm Card Sale", command=confirm_card,
-                **Theme.primary_button_style(), height=2
+                **Theme.ctk_primary_button_style(scale=scale), height=scale_dim(40)
             )
             btn_confirm.pack(fill="x")
 
-        btn_cash = tk.Button(method_frame, text="Cash", command=lambda: show_cash_panel(), **Theme.button_style())
+        btn_cash = ctk.CTkButton(method_frame, text="Cash", command=lambda: show_cash_panel(), **Theme.ctk_button_style(scale=scale))
         btn_cash.pack(side="left", fill="x", expand=True, padx=(0, 5))
-        btn_card = tk.Button(method_frame, text="Card", command=lambda: show_card_panel(), **Theme.button_style())
+        btn_card = ctk.CTkButton(method_frame, text="Card", command=lambda: show_card_panel(), **Theme.ctk_button_style(scale=scale))
         btn_card.pack(side="left", fill="x", expand=True, padx=(5, 0))
 
-        tk.Button(
+        ctk.CTkButton(
             dialog, text="Cancel", command=dialog.destroy,
-            **Theme.button_style()
+            **Theme.ctk_button_style(scale=scale)
         ).pack(fill="x", padx=20, pady=(0, 15))
 
         show_cash_panel()
@@ -695,87 +729,90 @@ def open_sales_window(current_user: str):
         barcode_entry.focus_set()
 
     # ---- Populate bottom-left: scan field + status + action buttons ----
-    scan_section = tk.Frame(left_panel, bg=Theme.BG_FRAME)
+    scan_section = ctk.CTkFrame(left_panel, fg_color=Theme.BG_FRAME, corner_radius=0)
     scan_section.pack(fill="x", padx=15, pady=15)
 
-    tk.Label(
+    ctk.CTkLabel(
         scan_section,
         text="Scan Item:",
-        bg=Theme.BG_FRAME,
-        fg=Theme.TEXT_PRIMARY,
-        font=(Theme.FONT_FAMILY, 11, 'bold')
+        fg_color="transparent",
+        text_color=Theme.TEXT_PRIMARY,
+        font=(Theme.FONT_FAMILY, scale_dim(11), 'bold')
     ).pack(anchor="w", pady=(0, 5))
 
-    barcode_entry = tk.Entry(scan_section, **Theme.entry_style())
-    barcode_entry.pack(fill="x", pady=5, ipady=6)
+    barcode_entry = ctk.CTkEntry(scan_section, **Theme.ctk_entry_style(scale=scale))
+    barcode_entry.pack(fill="x", pady=5)
     barcode_entry.bind('<Return>', on_barcode_scan)
     barcode_entry.bind('<KP_Enter>', on_barcode_scan)
 
     status_label.pack(fill="x", padx=15, pady=(0, 5))
 
-    button_frame = tk.Frame(left_panel, bg=Theme.BG_FRAME)
+    button_frame = ctk.CTkFrame(left_panel, fg_color=Theme.BG_FRAME, corner_radius=0)
     button_frame.pack(fill="x", padx=15, pady=(0, 15))
     button_frame.columnconfigure(0, weight=1)
     button_frame.columnconfigure(1, weight=1)
 
-    btn_remove = tk.Button(
+    btn_remove = ctk.CTkButton(
         button_frame,
         text="Remove",
         command=remove_from_cart,
-        **Theme.button_style(),
-        width=12
+        **Theme.ctk_button_style(scale=scale),
+        width=scale_dim(120)
     )
     btn_remove.grid(row=0, column=0, padx=5, pady=3, sticky="ew")
-    bind_hover_effect(btn_remove)
 
-    btn_discount = tk.Button(
+    btn_discount = ctk.CTkButton(
         button_frame,
         text="Discount",
         command=open_discount_dialog,
-        **Theme.button_style(),
-        width=12
+        **Theme.ctk_button_style(scale=scale),
+        width=scale_dim(120)
     )
     btn_discount.grid(row=0, column=1, padx=5, pady=3, sticky="ew")
-    bind_hover_effect(btn_discount)
 
-    btn_custom_item = tk.Button(
+    btn_custom_item = ctk.CTkButton(
         button_frame,
         text="Custom Item",
         command=add_custom_item,
-        **Theme.button_style(),
-        width=12
+        **Theme.ctk_button_style(scale=scale),
+        width=scale_dim(120)
     )
     btn_custom_item.grid(row=1, column=0, padx=5, pady=3, sticky="ew")
-    bind_hover_effect(btn_custom_item)
 
-    btn_clear = tk.Button(
+    btn_clear = ctk.CTkButton(
         button_frame,
         text="Clear Cart",
         command=clear_cart,
-        **Theme.button_style(),
-        width=12
+        **Theme.ctk_button_style(scale=scale),
+        width=scale_dim(120)
     )
     btn_clear.grid(row=1, column=1, padx=5, pady=3, sticky="ew")
-    bind_hover_effect(btn_clear)
 
-    btn_no_sale = tk.Button(
+    btn_no_sale = ctk.CTkButton(
         button_frame,
         text="No Sale",
         command=no_sale,
-        **Theme.button_style(),
-        width=12
+        **Theme.ctk_button_style(scale=scale),
+        width=scale_dim(120)
     )
     btn_no_sale.grid(row=2, column=0, columnspan=2, padx=5, pady=3, sticky="ew")
-    bind_hover_effect(btn_no_sale)
 
     # ---- Populate bottom-right: checkout button under the totals ----
-    checkout_btn = tk.Button(
+    checkout_btn = ctk.CTkButton(
         right_panel,
         text="CHECKOUT",
         command=open_payment_dialog,
-        **Theme.primary_button_style(),
-        height=2
+        **{**Theme.ctk_primary_button_style(scale=scale), 'font': (Theme.FONT_FAMILY, scale_dim(16), 'bold')},
+        height=scale_dim(50)
     )
-    checkout_btn.pack(fill="x", padx=15, pady=(0, 15))
+    # side="bottom" is important, not cosmetic: total_frame above is packed
+    # with expand=True and claims space greedily, so without an explicit
+    # side here Tk can squeeze this button down to near-zero height on a
+    # shorter screen instead of shrinking total_frame — anchoring it to the
+    # bottom reserves its full size first no matter how little vertical
+    # room is left.
+    checkout_btn.pack(side="bottom", fill="x", padx=15, pady=(0, 15))
 
     barcode_entry.focus_set()
+
+    return win
