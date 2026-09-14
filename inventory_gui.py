@@ -187,9 +187,19 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
 
     dialog = ctk.CTkToplevel(parent_win)
     dialog.title("Item Details")
-    dialog.geometry(scale_geometry(780, 680))
     dialog.configure(**Theme.ctk_window_style())
     dialog.transient(parent_win)
+
+    # Sized to fit the actual screen (capped at 90% of its height) rather
+    # than a flat scale_geometry(780, 680) — on a 1366x768 screen at a UI
+    # Scale above 1.0, that scaled height (e.g. 1020px at 150%) exceeds the
+    # real screen, so the bottom of the dialog — Save/Close — ends up
+    # rendered below the visible screen edge, looking like it's missing.
+    dialog_width = min(scale_dim(780), int(dialog.winfo_screenwidth() * 0.9))
+    dialog_height = min(scale_dim(680), int(dialog.winfo_screenheight() * 0.9))
+    dialog_x = (dialog.winfo_screenwidth() - dialog_width) // 2
+    dialog_y = (dialog.winfo_screenheight() - dialog_height) // 2
+    dialog.geometry(f"{dialog_width}x{dialog_height}+{dialog_x}+{dialog_y}")
 
     # state['supplier_id']/['vendor_loaded_name'] track the vendor as actually
     # loaded from the DB, independent of the combobox's displayed text, so
@@ -751,8 +761,13 @@ def _open_item_detail_dialog(parent_win, mode, item_id=None, prefill_barcode=Non
     def do_close():
         dialog.destroy()
 
+    # side="bottom" reserves this row's height first — notebook above is
+    # packed with expand=True and was claiming all available space, which
+    # on a short screen could squeeze Save/Close down to nothing (or, per
+    # the geometry fix above, they could end up below the visible screen
+    # edge entirely) instead of just showing less of the tab content.
     btn_frame = ctk.CTkFrame(dialog, fg_color=Theme.BG_DARK, corner_radius=0)
-    btn_frame.pack(fill="x", padx=15, pady=(0, 15))
+    btn_frame.pack(side="bottom", fill="x", padx=15, pady=(0, 15))
     save_btn = ctk.CTkButton(btn_frame, text="Save", command=do_save, **Theme.ctk_primary_button_style(scale=scale), width=scale_dim(120))
     save_btn.pack(side="left", padx=(0, 10))
     close_btn = ctk.CTkButton(btn_frame, text="Close", command=do_close, **Theme.ctk_button_style(scale=scale), width=scale_dim(120))
